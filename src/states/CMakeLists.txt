@@ -1,0 +1,23 @@
+rock_library(states
+    SOURCES
+        InitSimulation.cpp
+        Init.cpp
+        GenerateMap.cpp
+        DummyState.cpp
+    DEPS_PKGCONFIG 
+        base-lib
+        envire
+        logger-proxies
+        mars-proxies
+        motion_planning_libraries-proxies
+        orocos_cpp_base
+        orocos_cpp
+        state_machine
+        trajectory_follower-proxies
+        traversability-proxies
+        velodyne_lidar-proxies
+        localization-proxies
+        graph_slam-proxies
+        drive_mode_controller-proxies
+    HEADERS
+)

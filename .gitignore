@@ -1,2 +1,6 @@
-build/
-*.sw?
+# Ignore bullshit
+.orogen
+**/*.o
+**/build
+**/.kdev4
+**/framework.kdev4

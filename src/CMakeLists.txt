@@ -1,7 +1,20 @@
-rock_library(taskmanagement
-    SOURCES Dummy.cpp
-    HEADERS Dummy.hpp)
+add_subdirectory(states)
 
-rock_executable(taskmanagement_bin Main.cpp
-    DEPS taskmanagement)
+rock_library(common 
+        CommonStartup.cpp
+        Eo2Robot.cpp
+    DEPS_PKGCONFIG
+        state_machine
+)
 
+rock_executable(Drive
+    SOURCES 
+        Drive.cpp
+    HEADERS
+    DEPS        
+        states
+        common
+    DEPS_PKGCONFIG 
+        state_machine
+        state_machine_viz
+)
