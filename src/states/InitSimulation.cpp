@@ -10,6 +10,7 @@
 #include <trajectory_follower/proxies/Task.hpp>
 #include <traversability/proxies/Simple.hpp>
 #include <motion_planning_libraries/proxies/Task.hpp>
+#include <trajectory_follower/proxies/TurnVelocityToSteerAngleTask.hpp>
 
 InitSimulation::InitSimulation(bool logTasks): Init(logTasks)
 {
@@ -17,24 +18,19 @@ InitSimulation::InitSimulation(bool logTasks): Init(logTasks)
 
 bool InitSimulation::setup()
 {
-    std::cout << "Init::setup.." << std::endl;
     Init::setup();
 
     velodyneTask = new mars::proxies::RotatingLaserRangeFinder("velodyne", false);
     registerWithConfig(velodyneTask, "default");
-    std::cout << "Init velodyneTask.." << std::endl;
 
     driveModeControllerTask = new drive_mode_controller::proxies::Task("drive_mode_controller");
     registerWithConfig(driveModeControllerTask, "default");
-    std::cout << "Init driveModeControllerTask.." << std::endl;
 
     perfectOdometryTask = new mars::proxies::IMU("perfect_odometry");
     registerWithConfig(perfectOdometryTask, "default");
-    std::cout << "Init perfectOdometryTask.." << std::endl;
 
     jointsTask = new mars::proxies::Joints("joints");
     registerWithConfig(jointsTask, "default");
-    std::cout << "Init jointsTask.." << std::endl;
 
     return true;
 }
@@ -44,12 +40,9 @@ bool InitSimulation::connect()
     Init::connect();
 
     driveModeControllerTask->actuator_mov_cmds_out.connectTo(jointsTask->command);
-    trajectoryFollowerTask->motion_command.connectTo(driveModeControllerTask->motion_command);
+    motionCommandConverterTask->motion_command.connectTo(driveModeControllerTask->motion_command);
     velodyneTask->pointcloud.connectTo(velodyneSlamTask->simulated_pointcloud, RTT::ConnPolicy::buffer(50));
     perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);
-    velodyneSlamTask->envire_map.connectTo(traversabilityTask->mls_map);
-    velodyneSlamTask->pose_samples.connectTo(plannerTask->start_pose_samples);
-    velodyneSlamTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
 
     return true;
 }

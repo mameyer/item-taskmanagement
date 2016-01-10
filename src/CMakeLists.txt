@@ -5,6 +5,7 @@ rock_library(common
         Eo2Robot.cpp
     DEPS_PKGCONFIG
         state_machine
+        state_machine_viz
 )
 
 rock_executable(Drive

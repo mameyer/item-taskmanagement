@@ -3,8 +3,8 @@
 #include <orocos_cpp/Bundle.hpp>
 #include "states/InitSimulation.hpp"
 
-//#include <qt4/QtGui/QApplication>
-//#include <state_machine/StateMachineWidget.hpp>
+#include <QApplication>
+#include <state_machine/StateMachineWidget.hpp>
 #include <state_machine/StateMachine.hpp>
 
 using namespace orocos_cpp;
@@ -29,11 +29,11 @@ void CommonStartup::start(int argc, char** argv)
     if(simulationActive) {
         static int argcp = 0;
         static char** argvp = nullptr;
-        //app = new QApplication(argcp, argvp);
+        app = new QApplication(argcp, argvp);
 
-        /*widget = new StateMachineWidget();
+        widget = new StateMachineWidget();
         widget->show();
-        widget->resize(800,600);*/
+        widget->resize(800,600);
     }
 
     Spawner &spawner(Spawner::getInstace());
@@ -43,23 +43,17 @@ void CommonStartup::start(int argc, char** argv)
     stateMachine = &state_machine::StateMachine::getInstance();
 
     spawner.spawnDeployment("item_planner");
-    std::cout << "spawnDeployment: item_planner" << std::endl;
     spawner.spawnDeployment("item_follower");
-    std::cout << "spawnDeployment: item_follower" << std::endl;
     spawner.spawnDeployment("item_graphslam");
-    std::cout << "spawnDeployment: item_graphslam" << std::endl;
 
     if (simulationActive) {
 	spawner.spawnDeployment("eo2_sim");
-	std::cout << "spawnDeployment: eo2_sim" << std::endl;
         spawner.waitUntilAllReady(base::Time::fromSeconds(15));
-	std::cout << "spawnDeployment: waitUntilAllReady" << std::endl;
         init = new InitSimulation(loggingActive);
     } else {
 
     }
 
-    std::cout << "stateMachine->start.." << std::endl;
     stateMachine->start(init);
 }
 
@@ -69,9 +63,9 @@ void CommonStartup::runLoop(std::function<void()> loopCallback)
 
     if(simulationActive)
     {
-        /*widget->update(smDump);
+        widget->update(smDump);
         widget->repaint();
-        app->processEvents();*/
+        app->processEvents();
     }
 
     base::Time stateMachineLastSend = base::Time::now();
@@ -87,8 +81,8 @@ void CommonStartup::runLoop(std::function<void()> loopCallback)
             if(simulationActive)
             {
                 //update widget
-                /*widget->update(e);
-                widget->repaint();*/
+                widget->update(e);
+                widget->repaint();
             }
         }
         //Send SM every 60 seconds
@@ -111,7 +105,7 @@ void CommonStartup::runLoop(std::function<void()> loopCallback)
 
         if(simulationActive)
         {
-            //app->processEvents();
+            app->processEvents();
         }
     });
 

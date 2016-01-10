@@ -22,7 +22,6 @@ bool Init::isInitialized()
     return initialized;
 }
 
-
 void Init::enter(const state_machine::State* lastState)
 {
     msg << "Entering state Init" << std::endl;
@@ -99,12 +98,12 @@ void Init::registerWithConfig(RTT::TaskContext* task, const std::string& config,
 
 void Init::executeFunction()
 {
-    //orocos_cpp::LoggingHelper lHelper;
+    orocos_cpp::LoggingHelper lHelper;
 
-//     lHelper.logTasks(conf.loggingEnabledTaskMap);
+    //lHelper.logTasks(conf.loggingEnabledTaskMap);
 
     std::cout << "Init::executeFunction.." << std::endl;
-    
+
     setup();
     configure();
     connect();
@@ -115,7 +114,7 @@ void Init::executeFunction()
         std::cout << "Activating logger" << std::endl;
         std::vector<std::string> excludes;
 
-        //lHelper.logTasks(excludes);
+        lHelper.logTasks(excludes);
     }
 
     initialized = true;
@@ -123,43 +122,34 @@ void Init::executeFunction()
 
 bool Init::connect()
 {
+    velodyneSlamTask->envire_map.connectTo(traversabilityTask->mls_map);
+    velodyneSlamTask->pose_samples.connectTo(plannerTask->start_pose_samples);
+    velodyneSlamTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
     traversabilityTask->traversability_map.connectTo(plannerTask->traversability_map);
     plannerTask->trajectory.connectTo(trajectoryFollowerTask->trajectory);
-    
+    trajectoryFollowerTask->motion_command.connectTo(motionCommandConverterTask->motion_command_in);
+
     return true;
 }
 
 
 bool Init::setup()
 {
-    std::cout << "Init plannerTask.." << std::endl;
     plannerTask = new motion_planning_libraries::proxies::Task("planner",false);
     registerWithConfig(plannerTask);
-    
-    std::cout << "Init trajectoryFollowerTask.." << std::endl;
+
     trajectoryFollowerTask = new trajectory_follower::proxies::Task("follower");
     registerWithConfig(trajectoryFollowerTask);
-    
-    std::cout << "Init velodyneSlamTask.." << std::endl;
+
     velodyneSlamTask = new graph_slam::proxies::VelodyneSLAM("slam");
     registerWithConfig(velodyneSlamTask, "default");
-    
-    std::cout << "Init traversabilityTask.." << std::endl;
+
     traversabilityTask = new traversability::proxies::Simple("traversability");
     registerWithConfig(traversabilityTask);
-    
-    std::cout << "Init motionCommandConverterTask.." << std::endl;
+
     motionCommandConverterTask = new trajectory_follower::proxies::TurnVelocityToSteerAngleTask("motion_command_converter");
     registerWithConfig(motionCommandConverterTask);
-    
-    /*std::cout << "Init localizationTask.." << std::endl;
-    localizationTask = new localization::proxies::VelodyneInMLS("localization");
-    registerWithConfig(localizationTask);*/
-    
-    /*std::cout << "Init poseProviderTask.." << std::endl;
-    poseProviderTask = new localization::proxies::PoseProvider("pose_provider");
-    registerWithConfig(poseProviderTask);*/
-    
+
     return true;
 }
 
@@ -209,6 +199,5 @@ bool Init::start()
 
 void Init::exit()
 {
-    std::cout << "initialized is " << initialized << "\n";
     msg << "Leaving init state ...\n";
 };

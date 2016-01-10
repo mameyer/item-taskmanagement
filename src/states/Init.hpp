@@ -5,6 +5,7 @@
 #include <state_machine/Config.hpp>
 #include <orocos_cpp/ConfigurationHelper.hpp>
 #include <orocos_cpp/TransformerHelper.hpp>
+#include <orocos_cpp/LoggingHelper.hpp>
 #include "../Eo2Robot.hpp"
 #include "Forward.hpp"
 
