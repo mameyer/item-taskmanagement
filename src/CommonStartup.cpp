@@ -11,22 +11,22 @@ using namespace orocos_cpp;
 
 void CommonStartup::start(int argc, char** argv)
 {
-    simulationActive = false;
+    planningActive = false;
     bool loggingActive = false;
 
     for (int i = 0; i<argc; i++) {
         if(strcmp(argv[i], "sim") == 0) {
-            simulationActive=true;
+            planningActive=true;
             std::cout << "Simulation enabled" << std::endl;
         }
-        
+
         if(strcmp(argv[i], "log") == 0) {
             loggingActive=true;
             std::cout << "Logging enabled" << std::endl;
         }
     }
 
-    if(simulationActive) {
+    if(planningActive) {
         static int argcp = 0;
         static char** argvp = nullptr;
         app = new QApplication(argcp, argvp);
@@ -38,21 +38,23 @@ void CommonStartup::start(int argc, char** argv)
 
     Spawner &spawner(Spawner::getInstace());
     config = &(state_machine::Config::getConfig(Bundle::getInstance().getConfigurationDirectory() + "../taskmanagement.yml"));
-    
+
     std::cout << "config loaded.." << std::endl;
     stateMachine = &state_machine::StateMachine::getInstance();
 
-    spawner.spawnDeployment("item_planner");
     spawner.spawnDeployment("item_follower");
     spawner.spawnDeployment("item_graphslam");
 
-    if (simulationActive) {
-	spawner.spawnDeployment("eo2_sim");
-        spawner.waitUntilAllReady(base::Time::fromSeconds(15));
-        init = new InitSimulation(loggingActive);
-    } else {
-
+    spawner.spawnDeployment("eo2_sim");
+    //spawner.spawnTask("joint_dispatcher::Task", "eo2_dispatcher");
+    //spawner.spawnTask("odometry::Skid", "odometry");
+    spawner.waitUntilAllReady(base::Time::fromSeconds(15));
+    
+    if (planningActive) {
+	spawner.spawnDeployment("item_planner");
     }
+    
+    init = new InitSimulation(loggingActive, planningActive);
 
     stateMachine->start(init);
 }
@@ -61,7 +63,7 @@ void CommonStartup::runLoop(std::function<void()> loopCallback)
 {
     state_machine::serialization::StateMachine smDump(*stateMachine);
 
-    if(simulationActive)
+    if(planningActive)
     {
         widget->update(smDump);
         widget->repaint();
@@ -78,7 +80,7 @@ void CommonStartup::runLoop(std::function<void()> loopCallback)
         std::vector<state_machine::serialization::Event> newEvents = stateMachine->getNewEvents();
         for(auto e: newEvents)
         {
-            if(simulationActive)
+            if(planningActive)
             {
                 //update widget
                 widget->update(e);
@@ -103,7 +105,7 @@ void CommonStartup::runLoop(std::function<void()> loopCallback)
             std::cout << debugMsgs;
         }
 
-        if(simulationActive)
+        if(planningActive)
         {
             app->processEvents();
         }

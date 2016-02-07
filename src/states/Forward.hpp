@@ -28,7 +28,7 @@ namespace graph_slam
 namespace localization {
     namespace proxies {
 	class VelodyneInMLS;
-	class PoseProvider;
+	//class PoseProvider;
     }
 }
 namespace mars {
@@ -41,5 +41,17 @@ namespace mars {
 namespace drive_mode_controller {
     namespace proxies {
 	class Task;
+    }
+}
+namespace odometry
+{
+    namespace proxies {
+        class Skid;
+    }
+}
+namespace joint_dispatcher
+{
+    namespace proxies {
+        class Task;
     }
 }

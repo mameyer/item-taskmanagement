@@ -8,6 +8,7 @@
 #include <orocos_cpp/LoggingHelper.hpp>
 #include "../Eo2Robot.hpp"
 #include "Forward.hpp"
+#include <localization/proxies/PoseProvider.hpp>
 
 class TaskWithConfig
 {
@@ -32,6 +33,8 @@ public:
     std::vector<TaskWithConfig> getAllTasks() {
         return allTasks;
     }
+    
+    virtual bool restart();
  
 protected:
     trajectory_follower::proxies::Task *trajectoryFollowerTask;
@@ -41,6 +44,8 @@ protected:
     trajectory_follower::proxies::TurnVelocityToSteerAngleTask *motionCommandConverterTask;
     localization::proxies::VelodyneInMLS *localizationTask;
     localization::proxies::PoseProvider *poseProviderTask;
+    odometry::proxies::Skid *odometryTask;
+    joint_dispatcher::proxies::Task *eo2DispatcherTask;
     
     virtual bool setup();
     bool configure();

@@ -5,11 +5,14 @@
 class InitSimulation : public Init
 {
 public:
-    InitSimulation(bool logTasks);
+    InitSimulation(bool logTasks, bool active);
 private:
     virtual void executeFunction();
     virtual bool setup();
     virtual bool connect();
+    virtual bool restart();
+    
+    bool active;
 
     mars::proxies::RotatingLaserRangeFinder *velodyneTask;
     drive_mode_controller::proxies::Task *driveModeControllerTask;

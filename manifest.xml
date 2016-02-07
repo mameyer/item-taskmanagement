@@ -10,4 +10,7 @@
   <depend package="tools/orocos_cpp" />
   <depend package="base/types" />
   <depend package="spacebot/state_machine" />
+  <depend package="control/orogen/trajectory_follower" />
+  <depend package="item/orogen/item_deployments" />
+  <depend package="simulation/orogen/eo2_simulation" />
 </package>

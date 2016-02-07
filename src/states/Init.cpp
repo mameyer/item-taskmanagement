@@ -10,7 +10,9 @@
 #include <traversability/proxies/Simple.hpp>
 #include <trajectory_follower/proxies/TurnVelocityToSteerAngleTask.hpp>
 #include <localization/proxies/VelodyneInMLS.hpp>
-#include <localization/proxies/PoseProvider.hpp>
+//#include <localization/proxies/PoseProvider.hpp>
+#include <joint_dispatcher/proxies/Task.hpp>
+#include <odometry/proxies/Skid.hpp>
 
 Init::Init(bool logTasks) : State("Init"), initialized(false), doLog(logTasks) {
     trHelper = new orocos_cpp::TransformerHelper(robot);
@@ -122,33 +124,42 @@ void Init::executeFunction()
 
 bool Init::connect()
 {
-    velodyneSlamTask->envire_map.connectTo(traversabilityTask->mls_map);
-    velodyneSlamTask->pose_samples.connectTo(plannerTask->start_pose_samples);
-    velodyneSlamTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
-    traversabilityTask->traversability_map.connectTo(plannerTask->traversability_map);
-    plannerTask->trajectory.connectTo(trajectoryFollowerTask->trajectory);
+    //eo2DispatcherTask->synchronize();
+    
+    //velodyneSlamTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
+    poseProviderTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
     trajectoryFollowerTask->motion_command.connectTo(motionCommandConverterTask->motion_command_in);
-
+    velodyneSlamTask->pose_provider_update.connectTo(poseProviderTask->pose_provider_update);
+    
+    //auto dispatcherMotionStatusOut = new OutputProxyPort<base::samples::Joints>(eo2DispatcherTask->getPort("motion_status"));
+    //dispatcherMotionStatusOut->connectTo(odometryTask->actuator_samples, RTT::ConnPolicy::buffer(200));
+    
+    //odometryTask->odometry_samples.connectTo(velodyneSlamTask->odometry_samples, RTT::ConnPolicy::buffer(200));
+    //odometryTask->odometry_samples.connectTo(poseProviderTask->odometry_samples);
+    
     return true;
 }
 
 
 bool Init::setup()
 {
-    plannerTask = new motion_planning_libraries::proxies::Task("planner",false);
-    registerWithConfig(plannerTask);
-
     trajectoryFollowerTask = new trajectory_follower::proxies::Task("follower");
     registerWithConfig(trajectoryFollowerTask);
 
     velodyneSlamTask = new graph_slam::proxies::VelodyneSLAM("slam");
     registerWithConfig(velodyneSlamTask, "default");
 
-    traversabilityTask = new traversability::proxies::Simple("traversability");
-    registerWithConfig(traversabilityTask);
-
     motionCommandConverterTask = new trajectory_follower::proxies::TurnVelocityToSteerAngleTask("motion_command_converter");
     registerWithConfig(motionCommandConverterTask);
+    
+    poseProviderTask = new localization::proxies::PoseProvider("pose_provider");
+    registerWithConfig(poseProviderTask, "default");
+    
+    //eo2DispatcherTask = new joint_dispatcher::proxies::Task("eo2_dispatcher");
+    //registerWithConfig(eo2DispatcherTask, "default", "odometry");
+    
+    //odometryTask = new odometry::proxies::Skid("odometry");
+    //registerWithConfig(odometryTask);
 
     return true;
 }
@@ -201,3 +212,24 @@ void Init::exit()
 {
     msg << "Leaving init state ...\n";
 };
+
+bool Init::restart()
+{
+    for(TaskWithConfig &t: allTasks)
+    {
+        if(!t.task->stop())
+        {
+            throw std::runtime_error("Init::Failed to start task " + t.task->getName());
+        }
+        std::cout << "Init::Stopped " << t.task->getName() << std::endl;
+	
+	if(!t.task->start())
+        {
+            throw std::runtime_error("Init::Failed to start task " + t.task->getName());
+        }
+        std::cout << "Init::Started " << t.task->getName() << std::endl;
+
+    }
+
+    return true;
+}

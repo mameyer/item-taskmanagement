@@ -1,6 +1,7 @@
 #include "InitSimulation.hpp"
 #include <mars/proxies/Task.hpp>
 #include <orocos_cpp/Bundle.hpp>
+#include <mars/tasks/MarsControl.hpp>
 
 #include <mars/proxies/IMU.hpp>
 #include <mars/proxies/RotatingLaserRangeFinder.hpp>
@@ -12,13 +13,22 @@
 #include <motion_planning_libraries/proxies/Task.hpp>
 #include <trajectory_follower/proxies/TurnVelocityToSteerAngleTask.hpp>
 
-InitSimulation::InitSimulation(bool logTasks): Init(logTasks)
+InitSimulation::InitSimulation(bool logTasks, bool active): Init(logTasks)
 {
+    this->active = active;
 }
 
 bool InitSimulation::setup()
 {
     Init::setup();
+    
+    if (active) {
+	plannerTask = new motion_planning_libraries::proxies::Task("planner",false);
+	registerWithConfig(plannerTask);
+	
+	traversabilityTask = new traversability::proxies::Simple("traversability");
+	registerWithConfig(traversabilityTask);
+    }
 
     velodyneTask = new mars::proxies::RotatingLaserRangeFinder("velodyne", false);
     registerWithConfig(velodyneTask, "default");
@@ -39,9 +49,18 @@ bool InitSimulation::connect()
 {
     Init::connect();
 
+    if (active) {
+	velodyneSlamTask->envire_map.connectTo(traversabilityTask->mls_map);
+	poseProviderTask->pose_samples.connectTo(plannerTask->start_pose_samples);
+	plannerTask->trajectory.connectTo(trajectoryFollowerTask->trajectory);
+	traversabilityTask->traversability_map.connectTo(plannerTask->traversability_map);
+    }
+    
     driveModeControllerTask->actuator_mov_cmds_out.connectTo(jointsTask->command);
     motionCommandConverterTask->motion_command.connectTo(driveModeControllerTask->motion_command);
     velodyneTask->pointcloud.connectTo(velodyneSlamTask->simulated_pointcloud, RTT::ConnPolicy::buffer(50));
+    //perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);
+    perfectOdometryTask->pose_samples.connectTo(poseProviderTask->odometry_samples);
     perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);
 
     return true;
@@ -72,4 +91,26 @@ void InitSimulation::executeFunction()
     }
 
     Init::executeFunction();
+}
+
+bool InitSimulation::restart()
+{
+    mars::proxies::Task *marsSimulationTask = new mars::proxies::Task("mars_simulation", false);
+    
+    marsSimulationTask->stop();
+    
+    mars::Positions pos;
+    pos.nodename = "root";
+    pos.posx = 0.00685;
+    pos.posy = -0.000511;
+    pos.posz = 0.931059;
+    pos.rotx = 0;
+    pos.roty = 0;
+    pos.rotz = 0;
+    
+    marsSimulationTask->setPosition(pos);
+    
+    marsSimulationTask->start();
+
+    return Init::restart();
 }

@@ -2,6 +2,8 @@
 #include "states/GenerateMap.hpp"
 
 #include "CommonStartup.hpp"
+#include "Helper.hpp"
+#include <string>
 
 #include <orocos_cpp/Bundle.hpp>
 #include <state_machine/StateMachine.hpp>
@@ -9,6 +11,7 @@
 
 #include <base/samples/RigidBodyState.hpp>
 #include <trajectory_follower/proxies/Task.hpp>
+#include <base/Trajectory.hpp>
 
 class Drive: public state_machine::State
 {
@@ -22,6 +25,7 @@ public:
     };
 
 private:
+    unsigned int logId;
     bool wasFollowing;
     std::vector<base::samples::RigidBodyState> goals;
     state_machine::Config *config;
@@ -30,6 +34,7 @@ private:
     RTT::OutputPort< base::samples::RigidBodyState > *goalPoseWriter;
     RTT::InputPort< int > *trajectoryFollowerStateReader;
     RTT::InputPort< int > *globalPlannerStateReader;
+    RTT::InputPort< std::vector< base::Trajectory > > *trajectoryReader;
     GenerateMap genMap;
 };
 
@@ -43,7 +48,9 @@ Drive::Drive(state_machine::State* success, state_machine::State* failure)
     goalPoseWriter = &(globalPlanner->goal_pose_samples.getWriter());
     trajectoryFollowerStateReader = &(trajectoryFollower->state.getReader());
     globalPlannerStateReader = &(globalPlanner->state.getReader());
+    trajectoryReader = &(globalPlanner->trajectory.getReader());
     wasFollowing = false;
+    logId = 0;
 }
 
 void Drive::enter(const state_machine::State* lastState)
@@ -63,6 +70,18 @@ void Drive::executeFunction()
 	if (globalPlannerState == motion_planning_libraries::Task_STATES::Task_MISSING_START_GOAL_TRAV
 	    || globalPlannerState == motion_planning_libraries::Task_STATES::Task_MISSING_TRAV)
 	    executeSubState(genMap);
+    }
+    
+    std::vector< base::Trajectory > traj;
+    if (trajectoryReader->read(traj) == RTT::NewData) {
+	const char* autoproj_root = std::getenv("AUTOPROJ_CURRENT_ROOT");
+	if(autoproj_root == NULL) {
+	    std::runtime_error("Env AUTOPROJ_CURRENT_ROOT not available, return");
+	}
+
+	std::string autoproj_root_str(autoproj_root);
+	std::string path = autoproj_root_str + std::string("/bundles/eo2/logs/follower_trajectory.") + std::to_string(logId++) + std::string(".log");
+	Helper::writeTrajectory(traj, path);
     }
     
     int trajectoryFollowerState;
@@ -85,7 +104,7 @@ void Drive::executeFunction()
 
 void Drive::exit()
 {
-
+    
 }
 
 int main(int argc, char** argv)
@@ -124,6 +143,19 @@ int main(int argc, char** argv)
 
     std::vector< base::samples::RigidBodyState > goals;
     goals.push_back(goalPose);
+    
+    std::random_device rd;
+    std::mt19937 mt(rd());
+    std::uniform_real_distribution<double> randPositionCoord(-5, 5);
+    std::uniform_int_distribution<int> randOrientation(-50, 50);
+    
+    for (int i=0; i<50000; i++) {
+	base::samples::RigidBodyState rb;
+	rb.position = Eigen::Vector3d(randPositionCoord(mt), randPositionCoord(mt), 0.);
+	rb.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(base::Angle::deg2Rad(randOrientation(mt)), Eigen::Vector3d::UnitZ()));
+	goals.push_back(rb);
+    }
+    
     base::samples::RigidBodyState home;
     home.position = Eigen::Vector3d(0., 0., 0.);
     home.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(0., Eigen::Vector3d::UnitZ()));

@@ -19,5 +19,8 @@ rock_library(states
         localization-proxies
         graph_slam-proxies
         drive_mode_controller-proxies
+        localization-proxies
+        joint_dispatcher-proxies
+        odometry-proxies
     HEADERS
 )
