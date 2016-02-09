@@ -1,0 +1,3 @@
+Environment: follower_environment
+Optimizer: cmaes_optimizer
+MaxEvaluations: 1000

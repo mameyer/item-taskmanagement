@@ -1,9 +1,9 @@
 add_subdirectory(states)
+add_subdirectory(optimizer_env)
 
 rock_library(common 
         CommonStartup.cpp
         Eo2Robot.cpp
-        Helper.cpp
     DEPS_PKGCONFIG
         state_machine
         state_machine_viz
@@ -24,11 +24,17 @@ rock_executable(Drive
 rock_executable(DriveLog
     SOURCES 
         DriveLog.cpp
+        optimizer_env/FollowerOptimizerEnvironment.cpp
     HEADERS
-    DEPS        
+	optimizer_env/FollowerOptimizerEnvironment.hpp
+    DEPS
         states
         common
     DEPS_PKGCONFIG 
         state_machine
         state_machine_viz
+        bolero
+        bl_loader
+	lib_manager
+	configmaps
 )

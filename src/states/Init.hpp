@@ -29,6 +29,7 @@ public:
     void updateConfig(RTT::TaskContext *task, const std::vector<std::string> &configs);
     void updateConfig(RTT::TaskContext *task, const std::string &config, const std::string &config2);   
     void updateConfig(RTT::TaskContext *task, const std::string& config, const std::string& config2, const std::string& config3);
+    void updateConfig(RTT::TaskContext *task, const orocos_cpp::Configuration &conf);
     
     std::vector<TaskWithConfig> getAllTasks() {
         return allTasks;

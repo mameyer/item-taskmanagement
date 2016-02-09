@@ -1,0 +1,23 @@
+  <modules>
+    <module>
+      <name>bl_loader</name>
+      <src>autobuildgit@git.hb.dfki.de:team-learning/bolero.git</src>
+      <revision>88c3270e0311029287c1ee2ad4defb2200f101df</revision>
+    </module>
+    <module>
+      <name>cmaes_optimizer</name>
+      <src>autobuildgit@git.hb.dfki.de:team-learning/bolero.git</src>
+      <revision>88c3270e0311029287c1ee2ad4defb2200f101df</revision>
+    </module>
+    <module>
+      <name>follower_environment</name>
+      <src><unknown></src>
+      <revision><no git info></revision>
+    </module>
+    <module>
+      <name>libstdc++</name>
+      <src></src>
+      <version>408</version>
+      <revision></revision>
+    </module>
+  </modules>

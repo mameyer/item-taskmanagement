@@ -1,0 +1,11 @@
+prefix=../../install
+exec_prefix=../../install
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: follower_environment
+Description: 
+Version: 0.1
+Requires: configmaps bolero lib_manager bl_loader
+Libs: -L${libdir} -lpgpg_environment 
+Cflags: -I${includedir}

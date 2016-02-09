@@ -43,6 +43,11 @@ void Init::updateConfig(RTT::TaskContext* task, const std::vector< std::string >
     throw std::runtime_error("Init::updateConfig : No task " + task->getName() + " registered");
 }
 
+void Init::updateConfig(RTT::TaskContext* task, const orocos_cpp::Configuration& conf)
+{
+    confHelper.applyConfig(task, conf);
+}
+
 void Init::updateConfig(RTT::TaskContext* task, const std::string& config, const std::string& config2)
 {
     std::vector< std::string > configs;

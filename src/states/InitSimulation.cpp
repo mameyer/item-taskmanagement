@@ -101,9 +101,9 @@ bool InitSimulation::restart()
     
     mars::Positions pos;
     pos.nodename = "root";
-    pos.posx = 0.00685;
-    pos.posy = -0.000511;
-    pos.posz = 0.931059;
+    pos.posx = 0.;
+    pos.posy = 0.;
+    pos.posz = 0.05;
     pos.rotx = 0;
     pos.roty = 0;
     pos.rotz = 0;
