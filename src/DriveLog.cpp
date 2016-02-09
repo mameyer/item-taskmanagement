@@ -82,20 +82,24 @@ public:
     double angleErrorRelative;
     double distanceErrorRelative;
     bool stabilityFailed;
+    bool maxDistanceErrorReached;
     double stability;
     trajectory_follower::ControllerType controllerType;
     std::string conf;
+    double error;
 
     FollowerControllerRating()
         : angleError(std::numeric_limits< double >::max()),
           distanceError(std::numeric_limits< double >::max()),
           angleErrorRelative(std::numeric_limits< double >::max()),
           distanceErrorRelative(std::numeric_limits< double >::max()),
-          stability(std::numeric_limits< double >::max())
+          stability(std::numeric_limits< double >::max()),
+          error(std::numeric_limits< double >::max())
     {
         reachedEnd = false;
         numMotionCommands = 0;
         stabilityFailed = false;
+        maxDistanceErrorReached = false;
         conf = "";
     }
 
@@ -189,7 +193,7 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
     trajectoryFollowerStateReader = &(trajectoryFollower->state.getReader());
     trajectoryWriter = &(trajectoryFollower->trajectory.getWriter());
     poseReader = &(poseProviderTask->pose_samples.getReader());
-    followerDataReader = &(trajectoryFollower->follower_data.getReader());
+    followerDataReader = &(trajectoryFollower->follower_data.getReader(RTT::ConnPolicy::buffer(500)));
     wasFollowing = false;
     failedLastTime = false;
 
@@ -208,20 +212,18 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
 
     trajectoriesIter = trajectories.begin();
 
-    //currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION;
-    currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_CHAINED;
-
+    map = configmaps::ConfigMap::fromYamlFile(std::string("../../data/learning_config.yml"));
+    std::string strCotrollerType = map["ControllerType"][0].getString();
     std::string loggerPath = logDir + std::string("/");
-    switch (currentTrajectoryControllerType) {
-    case trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION:
-        loggerPath += std::string("CONTROLLER_NO_ORIENTATION__");
-        break;
-    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
-        loggerPath += std::string("CONTROLLER_CHAINED__");
-        break;
-    default:
-        std::runtime_error("wrong initialization for currentTrajectoryControllerType");
-        break;
+    
+    if (strCotrollerType == "CONTROLLER_NO_ORIENTATION") {
+	currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION;
+	loggerPath += std::string("CONTROLLER_NO_ORIENTATION__");
+    } else if (strCotrollerType == "CONTROLLER_CHAINED") {
+	currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_CHAINED;
+	loggerPath += std::string("CONTROLLER_CHAINED__");
+    } else {
+	std::runtime_error("wrong initialization for currentTrajectoryControllerType");
     }
 
     loggerPath += base::Time::now().toString() + std::string(".rating");
@@ -229,20 +231,20 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
     stream = std::shared_ptr< MyOstream >(new MyOstream(loggerPath));
     *stream.get() << "[[" << base::Time::now().toString() << "]] started rating: " << loggerPath << std::endl;
 
+    
     // optimizer
     evaluationDone = false;
 
     blLoader = new bolero::bl_loader::BLLoader();
     blLoader->loadConfigFile(std::string("../../data/learning_libraries.txt"));
     blLoader->dumpTo(std::string("../../data/libs_info.xml"));
-
-    map = configmaps::ConfigMap::fromYamlFile(std::string("../../data/learning_config.yml"));
+   
     strEnvironment = map["Environment"][0].getString();
     *stream.get() << "optimizer | Environment: " << strEnvironment << std::endl;
     strBLOptimizer = map["Optimizer"][0].getString();
     *stream.get() << "optimizer | Optimizer: " << strBLOptimizer << std::endl;
     maxEvaluations = map["MaxEvaluations"][0].getInt();
-    *stream.get() << "optimizer | MaxEvaluations: " << maxEvaluations << std::endl;
+    *stream.get() << "optimizer | MaxEvaluations: " << maxEvaluations << std::endl;    
 
     feedbacks = new double[maxEvaluations];
     num_feedbacks = 0;
@@ -297,8 +299,12 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
             break;
         }
     };
-    opFuns.maxDistanceErrReached = [&]() { return std::abs(rating[trajectoriesIter->first].back().distanceError) > maxDistanceError; };
-    opFuns.stabilityFailed = [&]() { return this->rating[trajectoriesIter->first].back().stabilityFailed; };
+    opFuns.maxDistanceErrReached = [&]() {
+        return this->rating[trajectoriesIter->first].back().maxDistanceErrorReached;
+    };
+    opFuns.stabilityFailed = [&]() {
+        return this->rating[trajectoriesIter->first].back().stabilityFailed;
+    };
 
     environment->setFunctions(opFuns);
 
@@ -315,33 +321,6 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
 
 void DriveLog::enter(const state_machine::State* lastState)
 {
-    // random test values
-    /*std::map< std::string, double > configValues;
-    std::random_device rd;
-    std::mt19937 mt(rd());
-    std::uniform_real_distribution<double> l1r(0.01, 0.3);
-    std::uniform_real_distribution<double> k0rNoOrientation(0.01, 5.);
-    std::uniform_real_distribution<double> k0rChained(0.001, 0.05);
-    std::uniform_real_distribution<double> k2r(0.001, 5.);
-    std::uniform_real_distribution<double> k3r(0.001, 5.);
-
-    switch (currentTrajectoryControllerType) {
-    case trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION:
-        configValues["l1"] = l1r(mt);
-        configValues["K0"] = k0rNoOrientation(mt);
-        break;
-    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
-        configValues["K0"] = k0rChained(mt);
-        configValues["K2"] = k2r(mt);
-        configValues["K3"] = k3r(mt);
-        break;
-    default:
-        std::runtime_error("wrong initialization for currentTrajectoryControllerType");
-        break;
-    }*/
-    // end random test values
-
-
     // generate controller config using optimizer
     if (!failedLastTime) {
         blOptimizer->getNextParameters(outputs, numOutputs);
@@ -377,19 +356,7 @@ void DriveLog::enter(const state_machine::State* lastState)
         std::sort(rating[trajectoriesIter->first].begin(), rating[trajectoriesIter->first].end(),
                   [](const FollowerControllerRating & a, const FollowerControllerRating & b) -> bool
         {
-            return a.angleErrorRelative < b.angleErrorRelative;
-        });
-
-        std::sort(rating[trajectoriesIter->first].begin(), rating[trajectoriesIter->first].end(),
-                  [](const FollowerControllerRating & a, const FollowerControllerRating & b) -> bool
-        {
-            return a.distanceErrorRelative < b.distanceErrorRelative;
-        });
-
-        std::sort(rating[trajectoriesIter->first].begin(), rating[trajectoriesIter->first].end(),
-                  [](const FollowerControllerRating & a, const FollowerControllerRating & b) -> bool
-        {
-            return a.stability < b.stability;
+            return a.error < b.error;
         });
 
         unsigned int upper = std::min(debugRatingCnt, static_cast<unsigned int>(rating[trajectoriesIter->first].size()));
@@ -397,7 +364,9 @@ void DriveLog::enter(const state_machine::State* lastState)
         for (unsigned int i=0; i<upper; i++) {
             if ((rating[trajectoriesIter->first].at(i).angleError == std::numeric_limits< double >::max())
                     || (rating[trajectoriesIter->first].at(i).distanceError == std::numeric_limits< double >::max())
-                    || (rating[trajectoriesIter->first].at(i).stability == std::numeric_limits< double >::max()))
+                    || (rating[trajectoriesIter->first].at(i).stability == std::numeric_limits< double >::max())
+		    || rating[trajectoriesIter->first].at(i).maxDistanceErrorReached
+		    || rating[trajectoriesIter->first].at(i).stabilityFailed)
                 break;
 
             *stream.get() << "best stability[" << i << "]: " << rating[trajectoriesIter->first].at(i) << " | " << rating[trajectoriesIter->first].at(i).conf << std::endl;
@@ -431,8 +400,9 @@ void DriveLog::enter(const state_machine::State* lastState)
             || currentPose.getRoll() < base::Angle::fromDeg(-45).getRad()
             || currentPose.getRoll() > base::Angle::fromDeg(45).getRad()) {
         *stream.get() <<  "[FAIL] invalid pose.." << std::endl;
+	failedLastTime = true;
     }
-    
+
     if (currentPose.position.x() !=0.
             || currentPose.position.y() != 0.) {
         *stream.get() <<  "[WARN] currentPose different from (0,0).." << std::endl;
@@ -441,30 +411,40 @@ void DriveLog::enter(const state_machine::State* lastState)
     trajectoryFollower->start();
     usleep(100);
 
+    followerDataReader->clear();
+    poseReader->clear();
+    trajectoryFollowerStateReader->clear();
+
     trajectoryWriter->write(trajectoriesIter->second);
 }
 
 void DriveLog::executeFunction()
 {
     trajectory_follower::FollowerData followerData;
+    if (wasFollowing) {
+        while (followerDataReader->read(followerData) == RTT::NewData) {
+            if (std::abs(followerData.distanceError) > maxDistanceError) {
+                rating[trajectoriesIter->first].back().maxDistanceErrorReached = true;
+                *stream.get() << "[[" << base::Time::now().toString() << "]] max distance error reached for " << trajectoriesIter->first << "; " << confValsStr << std::endl;
+                fail();
+		return;
+            }
+
+            rating[trajectoriesIter->first].back().numMotionCommands++;
+            distanceErrSum += followerData.distanceError;
+            angleErrSum += followerData.angleError;
+            stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
+            lastRot = followerData.motionCommand.rotation;
+        }
+    }
+
     int trajectoryFollowerState;
     if (trajectoryFollowerStateReader->readNewest(trajectoryFollowerState) == RTT::NewData) {
         if (trajectoryFollowerState == trajectory_follower::Task_STATES::Task_STABILITY_FAILED) {
             rating[trajectoriesIter->first].back().stabilityFailed = true;
             *stream.get() << "[[" << base::Time::now().toString() << "]] stability failed for " << trajectoriesIter->first << "; " << confValsStr << std::endl;
-
-            // optimizer
-            environment->stepAction();
-            num_feedbacks = environment->getFeedback(feedbacks);
-            feedback = 0.0;
-            for(int i = 0; i < num_feedbacks; i++)
-                feedback += feedbacks[i];
-
-            blOptimizer->setEvaluationFeedback(feedbacks, num_feedbacks);
-            environment->reset();
-            evaluationCount++;
-
             fail();
+	    return;
         }
 
         if (!wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FOLLOWING_TRAJECTORY)
@@ -480,80 +460,62 @@ void DriveLog::executeFunction()
             angleErrSum += followerData.angleError;
             stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
 
-            rating[trajectoriesIter->first].back().stability = stabilitySum/rating[trajectoriesIter->first].back().numMotionCommands;
+            if (rating[trajectoriesIter->first].back().numMotionCommands > 0) {
+                rating[trajectoriesIter->first].back().stability = stabilitySum/rating[trajectoriesIter->first].back().numMotionCommands;
+                rating[trajectoriesIter->first].back().distanceErrorRelative = distanceErrSum/rating[trajectoriesIter->first].back().numMotionCommands;
+                rating[trajectoriesIter->first].back().angleErrorRelative = angleErrSum/rating[trajectoriesIter->first].back().numMotionCommands;
+            }
+
             rating[trajectoriesIter->first].back().angleError = followerData.angleError;
             rating[trajectoriesIter->first].back().distanceError = followerData.distanceError;
-            rating[trajectoriesIter->first].back().numMotionCommands++;
-            rating[trajectoriesIter->first].back().distanceErrorRelative = distanceErrSum/rating[trajectoriesIter->first].back().numMotionCommands;
-            rating[trajectoriesIter->first].back().angleErrorRelative = angleErrSum/rating[trajectoriesIter->first].back().numMotionCommands;
 
             *stream.get() << "[[" << base::Time::now().toString() << "]] current rating[" << rating[trajectoriesIter->first].back().numMotionCommands << "]: " << rating[trajectoriesIter->first].back() << "; " << confValsStr << std::endl;
-
-
-            // optimizer
-            environment->stepAction();
-            num_feedbacks = environment->getFeedback(feedbacks);
-            feedback = 0.0;
-            for(int i = 0; i < num_feedbacks; i++)
-                feedback += feedbacks[i];
-
-            blOptimizer->setEvaluationFeedback(feedbacks, num_feedbacks);
-            environment->reset();
-            evaluationCount++;
-
-            if (evaluationCount > maxEvaluations
-                    || blOptimizer->isBehaviorLearningDone()
-                    || environment->isBehaviorLearningDone()) {
-                blOptimizer->getBestParameters(outputs, numOutputs);
-                *stream.get() << "[[" << base::Time::now().toString() << "]] evaluation done!!"  << std::endl << std::endl;
-
-                std::vector< double > bestConfVals;
-                opFuns.scaleToSearchSpace(outputs, bestConfVals);
-
-                std::ostringstream oss;
-                if (!bestConfVals.empty())
-                {
-                    std::copy(bestConfVals.begin(), bestConfVals.end()-1, std::ostream_iterator<double>(oss, ","));
-                    oss << bestConfVals.back();
-                }
-                *stream.get() << "best conf values: " << oss.str() << std::endl;
-
-                evaluationDone = true;
-            }
-
             finish();
-        }
-    } else {
-        if (followerDataReader->readNewest(followerData) == RTT::NewData) {
-            if (std::abs(followerData.distanceError) > maxDistanceError) {
-                *stream.get() << "[[" << base::Time::now().toString() << "]] max distance error reached for " << trajectoriesIter->first << "; " << confValsStr << std::endl;
-
-                // optimizer
-                environment->stepAction();
-                num_feedbacks = environment->getFeedback(feedbacks);
-                feedback = 0.0;
-                for(int i = 0; i < num_feedbacks; i++)
-                    feedback += feedbacks[i];
-
-                blOptimizer->setEvaluationFeedback(feedbacks, num_feedbacks);
-                environment->reset();
-                evaluationCount++;
-
-                fail();
-            }
-
-            rating[trajectoriesIter->first].back().numMotionCommands++;
-            distanceErrSum += followerData.distanceError;
-            angleErrSum += followerData.angleError;
-            stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
-            lastRot = followerData.motionCommand.rotation;
         }
     }
 }
 
 void DriveLog::exit()
 {
+    if (failedLastTime) {
+	*stream.get() << "exit. last time failed... " << std::endl;
+	return;
+    }
+    
+    *stream.get() << "finished evaluation no " << evaluationCount << std::endl;
 
+    // optimizer
+    environment->stepAction();
+    num_feedbacks = environment->getFeedback(feedbacks);
+    feedback = 0.0;
+    for(int i = 0; i < num_feedbacks; i++)
+        feedback += feedbacks[i];
+    
+    rating[trajectoriesIter->first].back().error = feedback;
+
+    blOptimizer->setEvaluationFeedback(feedbacks, num_feedbacks);
+    environment->reset();
+    evaluationCount++;
+
+    if (evaluationCount > maxEvaluations
+            || blOptimizer->isBehaviorLearningDone()
+            || environment->isBehaviorLearningDone()) {
+        blOptimizer->getBestParameters(outputs, numOutputs);
+        *stream.get() << "[[" << base::Time::now().toString() << "]] evaluation done!!"  << std::endl << std::endl;
+
+        std::vector< double > bestConfVals;
+        opFuns.scaleToSearchSpace(outputs, bestConfVals);
+
+        std::ostringstream oss;
+        if (!bestConfVals.empty())
+        {
+            std::copy(bestConfVals.begin(), bestConfVals.end()-1, std::ostream_iterator<double>(oss, ","));
+            oss << bestConfVals.back();
+        }
+        *stream.get() << "best conf values: " << oss.str() << std::endl;
+
+        evaluationDone = true;
+    }
 }
 
 int main(int argc, char** argv)

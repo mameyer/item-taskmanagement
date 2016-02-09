@@ -42,7 +42,7 @@ void FollowerOptimizerEnvironment::getOutputs(double* values, int numOutputs) co
 
 void FollowerOptimizerEnvironment::stepAction()
 {
-    error = 0.2*functions.angleError() + 0.3*functions.distanceError() + 0.5*functions.stability();
+    error = 4.5*functions.angleError() + 4.5*functions.distanceError() + functions.stability();
     if (functions.stabilityFailed() || functions.maxDistanceErrReached())
 	error += 1.;
     std::cout << "[" << runs++ << "] stepAction error: " << error << std::endl;
