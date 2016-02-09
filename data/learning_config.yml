@@ -1,5 +1,5 @@
 Environment: follower_environment
 Optimizer: cmaes_optimizer
-MaxEvaluations: 1000
-#ControllerType: CONTROLLER_NO_ORIENTATION
-ControllerType: CONTROLLER_CHAINED
+MaxEvaluations: 100000
+ControllerType: CONTROLLER_NO_ORIENTATION
+#ControllerType: CONTROLLER_CHAINED

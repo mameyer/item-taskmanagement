@@ -48,18 +48,21 @@ bool InitSimulation::setup()
 bool InitSimulation::connect()
 {
     Init::connect();
-
+    
+    std::cout << "InitSimulation::connect().." << std::endl;
     if (active) {
+	std::cout << "InitSimulation::connect(): active.." << std::endl;
 	velodyneSlamTask->envire_map.connectTo(traversabilityTask->mls_map);
 	poseProviderTask->pose_samples.connectTo(plannerTask->start_pose_samples);
 	plannerTask->trajectory.connectTo(trajectoryFollowerTask->trajectory);
 	traversabilityTask->traversability_map.connectTo(plannerTask->traversability_map);
+    } else {
+	std::cout << "InitSimulation::connect(): inactive.." << std::endl;
     }
     
     driveModeControllerTask->actuator_mov_cmds_out.connectTo(jointsTask->command);
     motionCommandConverterTask->motion_command.connectTo(driveModeControllerTask->motion_command);
     velodyneTask->pointcloud.connectTo(velodyneSlamTask->simulated_pointcloud, RTT::ConnPolicy::buffer(50));
-    //perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);
     perfectOdometryTask->pose_samples.connectTo(poseProviderTask->odometry_samples);
     perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);
 
@@ -95,8 +98,9 @@ void InitSimulation::executeFunction()
 
 bool InitSimulation::restart()
 {
+    std::cout << "InitSimulation::restart().." << std::endl;
     mars::proxies::Task *marsSimulationTask = new mars::proxies::Task("mars_simulation", false);
-    
+    Init::stop();
     marsSimulationTask->stop();
     
     mars::Positions pos;
@@ -108,9 +112,12 @@ bool InitSimulation::restart()
     pos.roty = 0;
     pos.rotz = 0;
     
-    marsSimulationTask->setPosition(pos);
+    velodyneTask->pointcloud.disconnect();
+    velodyneTask->pointcloud.connectTo(velodyneSlamTask->simulated_pointcloud, RTT::ConnPolicy::buffer(50));
     
+    marsSimulationTask->setPosition(pos);
     marsSimulationTask->start();
+    Init::start();
 
-    return Init::restart();
+    return true;
 }

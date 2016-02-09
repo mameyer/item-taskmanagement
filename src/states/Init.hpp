@@ -35,7 +35,8 @@ public:
         return allTasks;
     }
     
-    virtual bool restart();
+    virtual bool stop();
+    virtual bool restart() =0;
  
 protected:
     trajectory_follower::proxies::Task *trajectoryFollowerTask;

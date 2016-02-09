@@ -129,22 +129,13 @@ void Init::executeFunction()
 
 bool Init::connect()
 {
-    //eo2DispatcherTask->synchronize();
-    
-    //velodyneSlamTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
+    std::cout << "Init::connect().." << std::endl;
     poseProviderTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
     trajectoryFollowerTask->motion_command.connectTo(motionCommandConverterTask->motion_command_in);
     velodyneSlamTask->pose_provider_update.connectTo(poseProviderTask->pose_provider_update);
     
-    //auto dispatcherMotionStatusOut = new OutputProxyPort<base::samples::Joints>(eo2DispatcherTask->getPort("motion_status"));
-    //dispatcherMotionStatusOut->connectTo(odometryTask->actuator_samples, RTT::ConnPolicy::buffer(200));
-    
-    //odometryTask->odometry_samples.connectTo(velodyneSlamTask->odometry_samples, RTT::ConnPolicy::buffer(200));
-    //odometryTask->odometry_samples.connectTo(poseProviderTask->odometry_samples);
-    
     return true;
 }
-
 
 bool Init::setup()
 {
@@ -159,12 +150,6 @@ bool Init::setup()
     
     poseProviderTask = new localization::proxies::PoseProvider("pose_provider");
     registerWithConfig(poseProviderTask, "default");
-    
-    //eo2DispatcherTask = new joint_dispatcher::proxies::Task("eo2_dispatcher");
-    //registerWithConfig(eo2DispatcherTask, "default", "odometry");
-    
-    //odometryTask = new odometry::proxies::Skid("odometry");
-    //registerWithConfig(odometryTask);
 
     return true;
 }
@@ -218,23 +203,16 @@ void Init::exit()
     msg << "Leaving init state ...\n";
 };
 
-bool Init::restart()
+bool Init::stop()
 {
     for(TaskWithConfig &t: allTasks)
     {
         if(!t.task->stop())
         {
-            throw std::runtime_error("Init::Failed to start task " + t.task->getName());
+            throw std::runtime_error("Init::Failed to stop task " + t.task->getName());
         }
         std::cout << "Init::Stopped " << t.task->getName() << std::endl;
-	
-	if(!t.task->start())
-        {
-            throw std::runtime_error("Init::Failed to start task " + t.task->getName());
-        }
-        std::cout << "Init::Started " << t.task->getName() << std::endl;
-
     }
-
+    
     return true;
 }

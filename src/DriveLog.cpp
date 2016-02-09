@@ -554,9 +554,6 @@ int main(int argc, char** argv)
         return csu.init->isInitialized();
     });
 
-    csu.init->restart();
-    usleep(500);
-
     std::cout << "csu.runLoop.." << std::endl;
     csu.runLoop([&] () {
         if (drive->isEvaluationDone()) {
@@ -566,7 +563,7 @@ int main(int argc, char** argv)
 
         if (&csu.stateMachine->getCurrentState() == dummy) {
             csu.init->restart();
-            usleep(500);
+            usleep(1000);
             csu.stateMachine->start(drive);
         }
     });
