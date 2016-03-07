@@ -4,6 +4,7 @@
 #include "CommonStartup.hpp"
 #include <orocos_cpp/Configuration.hpp>
 #include <orocos_cpp/ConfigurationHelper.hpp>
+#include <orocos_cpp/Spawner.hpp>
 
 #include <orocos_cpp/Bundle.hpp>
 #include <state_machine/StateMachine.hpp>
@@ -121,7 +122,7 @@ public:
     virtual void executeFunction();
     virtual void exit();
     inline void setLogDir(const std::string &logDir) {
-        this->logDir = logDir;
+        this->trajectoriesDirectory = logDir;
     };
     Init *init;
     bool isEvaluationDone() {
@@ -129,15 +130,14 @@ public:
     };
 
 private:
-    const double maxK0NoOrientation = 0.3;
-    const double maxK0Chained = 0.05;
-    const double maxK2 = 5.;
-    const double maxK3 = 5.;
-    const double maxL1 = 0.3;
+    double maxK0NoOrientation;
+    double maxK2;
+    double maxK3;
+    double maxL1;
 
-    const double maxDistanceError = 1.5;
-    const unsigned int maxSeconds = 120;
-    const unsigned int debugRatingCnt = 10;
+    double maxDistanceError;
+    unsigned int maxSeconds;
+    unsigned int debugRatingCnt;
 
     std::shared_ptr< MyOstream > stream;
     bool wasFollowing;
@@ -149,6 +149,7 @@ private:
     localization::proxies::PoseProvider *poseProviderTask;
     RTT::InputPort< base::samples::RigidBodyState > *poseReader;
     std::string logDir;
+    std::string trajectoriesDirectory;
     std::map< std::string, std::vector< base::Trajectory > >::iterator trajectoriesIter;
     std::map< std::string, double > configValues;
     orocos_cpp::ConfigurationHelper confHelper;
@@ -182,7 +183,9 @@ private:
     bool evaluationDone;
     configmaps::ConfigMap map;
     bool failedLastTime;
+    double trajectorySpeed;
     bolero::follower_optimizer_environment::OptimizerFunctions opFuns;
+    base::Time t;
 };
 
 DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
@@ -203,27 +206,51 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
 
     std::string autoproj_root_str(autoproj_root);
     logDir = autoproj_root_str + std::string("/bundles/eo2/logs");
+    trajectoriesDirectory = logDir + std::string("/trajectories");
 
-    std::cout << "Helper::readTrajectories: " << logDir << std::endl;
-    readTrajectories(trajectories, logDir);
+    std::cout << "Helper::readTrajectories: " << trajectoriesDirectory << std::endl;
+    readTrajectories(trajectories, trajectoriesDirectory);
 
     if (trajectories.empty())
         throw std::runtime_error("DriveLog::enter no trajectories set..");
 
-    trajectoriesIter = trajectories.begin();
-
     map = configmaps::ConfigMap::fromYamlFile(std::string("../../data/learning_config.yml"));
+    int trId = map["TrId"][0].getInt();
+    if (trId > trajectories.size()-1)
+        throw std::runtime_error("wrong trajectory id configured..");
+
+    trajectoriesIter = trajectories.begin();
+    std::advance(trajectoriesIter, trId);
+
+    if (trId == 0 && trajectories.size() > 1) {
+        auto it = trajectories.begin();
+        it++;
+        trajectoriesIter->second.insert(trajectoriesIter->second.end(), it->second.begin(), it->second.end());
+    }
+
+    maxK0NoOrientation = map["MaxK0NoOrientation"][0].getDouble();
+    maxK2 = map["MaxK2"][0].getDouble();
+    maxK3 = map["MaxK3"][0].getDouble();
+    maxL1 = map["MaxL1"][0].getDouble();
+    maxDistanceError = map["MaxDistanceError"][0].getDouble();
+    maxSeconds = map["MaxSeconds"][0].getInt();
+    debugRatingCnt = map["DebugRatingCnt"][0].getInt();
+    trajectorySpeed = map["TrajectorySpeed"][0].getDouble();
+
+    /*for (base::Trajectory &tr: trajectoriesIter->second)
+        tr.speed = trajectorySpeed;*/
+
     std::string strCotrollerType = map["ControllerType"][0].getString();
-    std::string loggerPath = logDir + std::string("/");
-    
+    std::string loggerPath = logDir + std::string("/ratings/");
+
     if (strCotrollerType == "CONTROLLER_NO_ORIENTATION") {
-	currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION;
-	loggerPath += std::string("CONTROLLER_NO_ORIENTATION__");
-    } else if (strCotrollerType == "CONTROLLER_CHAINED") {
-	currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_CHAINED;
-	loggerPath += std::string("CONTROLLER_CHAINED__");
+        currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION;
+        loggerPath += std::string("CONTROLLER_NO_ORIENTATION__");
+    } else if (strCotrollerType == "CONTROLLER_SAMSON") {
+        currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_SAMSON;
+        loggerPath += std::string("CONTROLLER_SAMSON__");
     } else {
-	std::runtime_error("wrong initialization for currentTrajectoryControllerType");
+        std::runtime_error("wrong initialization for currentTrajectoryControllerType");
     }
 
     loggerPath += base::Time::now().toString() + std::string(".rating");
@@ -231,20 +258,20 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
     stream = std::shared_ptr< MyOstream >(new MyOstream(loggerPath));
     *stream.get() << "[[" << base::Time::now().toString() << "]] started rating: " << loggerPath << std::endl;
 
-    
+
     // optimizer
     evaluationDone = false;
 
     blLoader = new bolero::bl_loader::BLLoader();
     blLoader->loadConfigFile(std::string("../../data/learning_libraries.txt"));
     blLoader->dumpTo(std::string("../../data/libs_info.xml"));
-   
+
     strEnvironment = map["Environment"][0].getString();
     *stream.get() << "optimizer | Environment: " << strEnvironment << std::endl;
     strBLOptimizer = map["Optimizer"][0].getString();
     *stream.get() << "optimizer | Optimizer: " << strBLOptimizer << std::endl;
     maxEvaluations = map["MaxEvaluations"][0].getInt();
-    *stream.get() << "optimizer | MaxEvaluations: " << maxEvaluations << std::endl;    
+    *stream.get() << "optimizer | MaxEvaluations: " << maxEvaluations << std::endl;
 
     feedbacks = new double[maxEvaluations];
     num_feedbacks = 0;
@@ -261,8 +288,8 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
     case trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION:
         environment->setNumInputs(2);
         break;
-    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
-        environment->setNumInputs(3);
+    case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+        environment->setNumInputs(2);
         break;
     default:
         std::runtime_error("wrong initialization for currentTrajectoryControllerType");
@@ -272,10 +299,10 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
 
     // optimizer functions
     opFuns.angleError = [&]() {
-        return this->rating[trajectoriesIter->first].back().angleError;
+        return this->rating[trajectoriesIter->first].back().angleErrorRelative;
     };
     opFuns.distanceError = [&]() {
-        return this->rating[trajectoriesIter->first].back().distanceError;
+        return this->rating[trajectoriesIter->first].back().distanceErrorRelative;
     };
     opFuns.stability = [&]() {
         return this->rating[trajectoriesIter->first].back().stability;
@@ -288,11 +315,10 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
             params[0] = maxK0NoOrientation*values[0];
             params[1] = maxL1*values[1];
             break;
-        case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
-            params.resize(3);
-            params[0] = maxK0Chained*values[0];
-            params[1] = maxK2*values[1];
-            params[2] = maxK3*values[2];
+        case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+            params.resize(2);
+            params[0] = maxK2*values[0];
+            params[1] = maxK3*values[1];
             break;
         default:
             std::runtime_error("wrong initialization for currentTrajectoryControllerType");
@@ -331,13 +357,12 @@ void DriveLog::enter(const state_machine::State* lastState)
 
     switch (currentTrajectoryControllerType) {
     case trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION:
-        configValues["l1"] = environment->getCurParams()[0];
-        configValues["K0"] = environment->getCurParams()[1];
-        break;
-    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
         configValues["K0"] = environment->getCurParams()[0];
-        configValues["K2"] = environment->getCurParams()[1];
-        configValues["K3"] = environment->getCurParams()[2];
+        configValues["l1"] = environment->getCurParams()[1];
+        break;
+    case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+        configValues["K2"] = environment->getCurParams()[0];
+        configValues["K3"] = environment->getCurParams()[1];
         break;
     default:
         std::runtime_error("wrong initialization for currentTrajectoryControllerType");
@@ -365,8 +390,8 @@ void DriveLog::enter(const state_machine::State* lastState)
             if ((rating[trajectoriesIter->first].at(i).angleError == std::numeric_limits< double >::max())
                     || (rating[trajectoriesIter->first].at(i).distanceError == std::numeric_limits< double >::max())
                     || (rating[trajectoriesIter->first].at(i).stability == std::numeric_limits< double >::max())
-		    || rating[trajectoriesIter->first].at(i).maxDistanceErrorReached
-		    || rating[trajectoriesIter->first].at(i).stabilityFailed)
+                    || rating[trajectoriesIter->first].at(i).maxDistanceErrorReached
+                    || rating[trajectoriesIter->first].at(i).stabilityFailed)
                 break;
 
             *stream.get() << "best stability[" << i << "]: " << rating[trajectoriesIter->first].at(i) << " | " << rating[trajectoriesIter->first].at(i).conf << std::endl;
@@ -389,7 +414,8 @@ void DriveLog::enter(const state_machine::State* lastState)
     lastRot = 0;
     stabilitySum = 0;
 
-    usleep(1000);
+    poseReader->clear();
+
     base::samples::RigidBodyState currentPose;
     while (poseReader->readNewest(currentPose) == RTT::NoData) {
         usleep(100);
@@ -398,14 +424,17 @@ void DriveLog::enter(const state_machine::State* lastState)
     if (currentPose.getPitch() < base::Angle::fromDeg(-45).getRad()
             || currentPose.getPitch() > base::Angle::fromDeg(45).getRad()
             || currentPose.getRoll() < base::Angle::fromDeg(-45).getRad()
-            || currentPose.getRoll() > base::Angle::fromDeg(45).getRad()) {
+            || currentPose.getRoll() > base::Angle::fromDeg(45).getRad()
+            || currentPose.getYaw() > base::Angle::fromDeg(20).getRad()
+            || currentPose.getYaw() < base::Angle::fromDeg(-20).getRad()) {
         *stream.get() <<  "[FAIL] invalid pose.." << std::endl;
-	failedLastTime = true;
+        failedLastTime = true;
     }
 
-    if (currentPose.position.x() !=0.
-            || currentPose.position.y() != 0.) {
-        *stream.get() <<  "[WARN] currentPose different from (0,0).." << std::endl;
+    if (currentPose.position.x() > 0.5 || currentPose.position.x() < -0.5
+            || currentPose.position.y() > 0.5 || currentPose.position.y() < -0.5) {
+        *stream.get() <<  "[FAIL] invalid pose.." << std::endl;
+        failedLastTime = true;
     }
 
     trajectoryFollower->start();
@@ -415,11 +444,19 @@ void DriveLog::enter(const state_machine::State* lastState)
     poseReader->clear();
     trajectoryFollowerStateReader->clear();
 
+    t = base::Time::now();
     trajectoryWriter->write(trajectoriesIter->second);
 }
 
 void DriveLog::executeFunction()
 {
+    if ((base::Time::now() - t).toSeconds() > 120) {
+        *stream.get() << "[TIMEOUT] .." << std::endl;
+        failedLastTime = true;
+        fail();
+        return;
+    }
+
     trajectory_follower::FollowerData followerData;
     if (wasFollowing) {
         while (followerDataReader->read(followerData) == RTT::NewData) {
@@ -427,14 +464,14 @@ void DriveLog::executeFunction()
                 rating[trajectoriesIter->first].back().maxDistanceErrorReached = true;
                 *stream.get() << "[[" << base::Time::now().toString() << "]] max distance error reached for " << trajectoriesIter->first << "; " << confValsStr << std::endl;
                 fail();
-		return;
+                return;
             }
 
             rating[trajectoriesIter->first].back().numMotionCommands++;
-            distanceErrSum += followerData.distanceError;
-            angleErrSum += followerData.angleError;
-            stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
-            lastRot = followerData.motionCommand.rotation;
+            distanceErrSum += std::abs(followerData.distanceError);
+            angleErrSum += std::abs(followerData.angleError);
+            //stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
+            //lastRot = followerData.motionCommand.rotation;
         }
     }
 
@@ -444,7 +481,7 @@ void DriveLog::executeFunction()
             rating[trajectoriesIter->first].back().stabilityFailed = true;
             *stream.get() << "[[" << base::Time::now().toString() << "]] stability failed for " << trajectoriesIter->first << "; " << confValsStr << std::endl;
             fail();
-	    return;
+            return;
         }
 
         if (!wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FOLLOWING_TRAJECTORY)
@@ -456,9 +493,9 @@ void DriveLog::executeFunction()
                 usleep(100);
             }
 
-            distanceErrSum += followerData.distanceError;
-            angleErrSum += followerData.angleError;
-            stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
+            distanceErrSum += std::abs(followerData.distanceError);
+            angleErrSum += std::abs(followerData.angleError);
+            //stabilitySum += std::abs(lastRot-followerData.motionCommand.rotation);
 
             if (rating[trajectoriesIter->first].back().numMotionCommands > 0) {
                 rating[trajectoriesIter->first].back().stability = stabilitySum/rating[trajectoriesIter->first].back().numMotionCommands;
@@ -478,11 +515,22 @@ void DriveLog::executeFunction()
 void DriveLog::exit()
 {
     if (failedLastTime) {
-	*stream.get() << "exit. last time failed... " << std::endl;
-	return;
+        *stream.get() << "exit. last time failed... " << std::endl;
+        return;
     }
-    
+
     *stream.get() << "finished evaluation no " << evaluationCount << std::endl;
+    
+    /*blOptimizer->getBestParameters(outputs, numOutputs);
+    std::vector< double > bestConfVals;
+    opFuns.scaleToSearchSpace(outputs, bestConfVals);
+    std::ostringstream oss;
+    if (!bestConfVals.empty())
+    {
+        std::copy(bestConfVals.begin(), bestConfVals.end()-1, std::ostream_iterator<double>(oss, ","));
+        oss << bestConfVals.back();
+    }
+    *stream.get() << "best conf values so far: " << oss.str() << std::endl;*/
 
     // optimizer
     environment->stepAction();
@@ -490,7 +538,7 @@ void DriveLog::exit()
     feedback = 0.0;
     for(int i = 0; i < num_feedbacks; i++)
         feedback += feedbacks[i];
-    
+
     rating[trajectoriesIter->first].back().error = feedback;
 
     blOptimizer->setEvaluationFeedback(feedbacks, num_feedbacks);
@@ -502,17 +550,6 @@ void DriveLog::exit()
             || environment->isBehaviorLearningDone()) {
         blOptimizer->getBestParameters(outputs, numOutputs);
         *stream.get() << "[[" << base::Time::now().toString() << "]] evaluation done!!"  << std::endl << std::endl;
-
-        std::vector< double > bestConfVals;
-        opFuns.scaleToSearchSpace(outputs, bestConfVals);
-
-        std::ostringstream oss;
-        if (!bestConfVals.empty())
-        {
-            std::copy(bestConfVals.begin(), bestConfVals.end()-1, std::ostream_iterator<double>(oss, ","));
-            oss << bestConfVals.back();
-        }
-        *stream.get() << "best conf values: " << oss.str() << std::endl;
 
         evaluationDone = true;
     }
@@ -538,35 +575,57 @@ int main(int argc, char** argv)
         }
     }
 
-    CommonStartup csu;
-    csu.start(argc, argv);
-    std::cout << "csu.start.." << std::endl;
+    CommonStartup *csu = new CommonStartup();
+    csu->start(argc, argv);
+
+    std::cout << "CommonStartup started.." << std::endl;
 
     DummyState *dummy = new DummyState();
     DriveLog *drive = new DriveLog(dummy, dummy);
     GenerateMap* gm = new GenerateMap(drive);
-    drive->init = csu.init;
+    drive->init = csu->init;
 
     if (gotLogDir)
         drive->setLogDir(std::string(argv[logStart]));
 
-    csu.init->addEdge("Initialized", gm, [&] () {
-        return csu.init->isInitialized();
+    csu->init->addEdge("Initialized", gm, [&] () {
+        return csu->init->isInitialized();
     });
 
     std::cout << "csu.runLoop.." << std::endl;
-    csu.runLoop([&] () {
+    csu->runLoop([&] () {
         if (drive->isEvaluationDone()) {
             std::cout << "break csu.runLoop because evaluation is done.." << std::endl;
             return;
         }
 
-        if (&csu.stateMachine->getCurrentState() == dummy) {
-            csu.init->restart();
-            usleep(1000);
-            csu.stateMachine->start(drive);
+        if (&csu->stateMachine->getCurrentState() == dummy) {
+            while (true) {
+                try {
+                    csu->init->restart();
+                    break;
+                } catch(...) {
+
+                }
+            }
+
+            csu->stateMachine->start(gm);
+            return;
         }
     });
+
+    orocos_cpp::Spawner &spawner(orocos_cpp::Spawner::getInstace());
+    try {
+        spawner.killAll();
+        sleep(2);
+    } catch (...) {
+
+    }
+
+    delete dummy;
+    delete gm;
+    delete drive;
+    delete csu;
 
     return 0;
 }
@@ -586,9 +645,9 @@ bool DriveLog::updateConfig(const std::map< std::string, double > &confVals, tra
         cType = ":CONTROLLER_NO_ORIENTATION";
         controllerConfigName = "noOrientationControllerConfig";
         break;
-    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
-        cType = ":CONTROLLER_CHAINED";
-        controllerConfigName = "chainedControllerConfig";
+    case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+        cType = ":CONTROLLER_SAMSON";
+        controllerConfigName = "samsonControllerConfig";
         break;
     default:
         std::runtime_error("wrong initialization for currentTrajectoryControllerType");

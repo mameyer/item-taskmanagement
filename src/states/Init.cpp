@@ -1,20 +1,24 @@
 #include "Init.hpp"
 #include <rtt/transports/corba/TaskContextServer.hpp>
-
 #include <orocos_cpp/ConfigurationHelper.hpp>
 #include <orocos_cpp/Bundle.hpp>
-
 #include <trajectory_follower/proxies/Task.hpp>
 #include <motion_planning_libraries/proxies/Task.hpp>
 #include <graph_slam/proxies/VelodyneSLAM.hpp>
 #include <traversability/proxies/Simple.hpp>
 #include <trajectory_follower/proxies/TurnVelocityToSteerAngleTask.hpp>
 #include <localization/proxies/VelodyneInMLS.hpp>
-//#include <localization/proxies/PoseProvider.hpp>
 #include <joint_dispatcher/proxies/Task.hpp>
 #include <odometry/proxies/Skid.hpp>
+#include <mars/proxies/Task.hpp>
+#include <orocos_cpp/Bundle.hpp>
+#include <mars/tasks/MarsControl.hpp>
+#include <mars/proxies/IMU.hpp>
+#include <mars/proxies/RotatingLaserRangeFinder.hpp>
+#include <mars/proxies/Joints.hpp>
+#include <drive_mode_controller/proxies/Task.hpp>
 
-Init::Init(bool logTasks) : State("Init"), initialized(false), doLog(logTasks) {
+Init::Init(bool logTasks, bool active) : State("Init"), initialized(false), doLog(logTasks), active(active) {
     trHelper = new orocos_cpp::TransformerHelper(robot);
     std::cout << "Init::Init.." << std::endl;
 }
@@ -108,6 +112,28 @@ void Init::executeFunction()
     orocos_cpp::LoggingHelper lHelper;
 
     //lHelper.logTasks(conf.loggingEnabledTaskMap);
+    
+    std::cout << "InitSimulation::executeFunction.." << std::endl;
+    mars::proxies::Task *marsSimulationTask = new mars::proxies::Task("mars_simulation", false);
+    confHelper.applyConfig(marsSimulationTask, "default");
+
+    std::string dataDir = orocos_cpp::Bundle::getInstance().getDataDirectory();
+    const char* autoproj_root = std::getenv("AUTOPROJ_CURRENT_ROOT");
+    if(autoproj_root == NULL) {
+        std::cerr << "Env AUTOPROJ_CURRENT_ROOT not available, return" << std::endl;
+        return;
+    }
+
+    std::string autoproj_root_str(autoproj_root);
+    try
+    {
+        marsSimulationTask->configure();
+        marsSimulationTask->start();
+        marsSimulationTask->loadScene(autoproj_root_str + "/models/robots/eo2/smurf/eo2.smurf");
+        marsSimulationTask->loadScene(autoproj_root_str + "/models/terrains/spacebot_cup_building.smurfs");
+    } catch(std::runtime_error& e) {
+        std::cerr << "marsSimulationTask: " << e.what() << std::endl;
+    }
 
     std::cout << "Init::executeFunction.." << std::endl;
 
@@ -129,11 +155,45 @@ void Init::executeFunction()
 
 bool Init::connect()
 {
-    std::cout << "Init::connect().." << std::endl;
     poseProviderTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
-    trajectoryFollowerTask->motion_command.connectTo(motionCommandConverterTask->motion_command_in);
+    trajectoryFollowerTask->motion2D.connectTo(motionCommandConverterTask->motion_command_in);
     velodyneSlamTask->pose_provider_update.connectTo(poseProviderTask->pose_provider_update);
     
+    if (active) {
+	velodyneSlamTask->envire_map.connectTo(traversabilityTask->mls_map);
+	poseProviderTask->pose_samples.connectTo(plannerTask->start_pose_samples);
+	plannerTask->trajectory.connectTo(trajectoryFollowerTask->trajectory);
+	traversabilityTask->traversability_map.connectTo(plannerTask->traversability_map);
+    }
+    
+    driveModeControllerTask->actuator_mov_cmds_out.connectTo(jointsTask->command);
+    motionCommandConverterTask->motion2D.connectTo(driveModeControllerTask->motion2D);
+    velodyneTask->pointcloud.connectTo(velodyneSlamTask->simulated_pointcloud);
+    perfectOdometryTask->pose_samples.connectTo(poseProviderTask->odometry_samples);
+    perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);
+    
+    return true;
+}
+
+bool Init::disconnect()
+{
+    trajectoryFollowerTask->robot_pose.disconnect();
+    motionCommandConverterTask->motion_command_in.disconnect();
+    poseProviderTask->pose_provider_update.disconnect();
+    
+    if (active) {
+	traversabilityTask->mls_map.disconnect();
+	plannerTask->start_pose_samples.disconnect();
+	trajectoryFollowerTask->trajectory.disconnect();
+	plannerTask->traversability_map.disconnect();
+    }
+    
+    jointsTask->command.disconnect();
+    driveModeControllerTask->motion_command.disconnect();
+    velodyneSlamTask->simulated_pointcloud.disconnect();
+    poseProviderTask->odometry_samples.disconnect();
+    velodyneSlamTask->odometry_samples.disconnect();
+
     return true;
 }
 
@@ -150,6 +210,26 @@ bool Init::setup()
     
     poseProviderTask = new localization::proxies::PoseProvider("pose_provider");
     registerWithConfig(poseProviderTask, "default");
+    
+    if (active) {
+	plannerTask = new motion_planning_libraries::proxies::Task("planner",false);
+	registerWithConfig(plannerTask);
+	
+	traversabilityTask = new traversability::proxies::Simple("traversability");
+	registerWithConfig(traversabilityTask);
+    }
+
+    velodyneTask = new mars::proxies::RotatingLaserRangeFinder("velodyne", false);
+    registerWithConfig(velodyneTask, "default");
+
+    driveModeControllerTask = new drive_mode_controller::proxies::Task("drive_mode_controller");
+    registerWithConfig(driveModeControllerTask, "default");
+
+    perfectOdometryTask = new mars::proxies::IMU("perfect_odometry");
+    registerWithConfig(perfectOdometryTask, "default");
+
+    jointsTask = new mars::proxies::Joints("joints");
+    registerWithConfig(jointsTask, "default");
 
     return true;
 }
@@ -215,4 +295,38 @@ bool Init::stop()
     }
     
     return true;
+}
+
+bool Init::restart()
+{
+    disconnect();
+    mars::proxies::Task *marsSimulationTask = new mars::proxies::Task("mars_simulation", false);
+    marsSimulationTask->stop();
+    
+    mars::Positions pos;
+    pos.nodename = "root";
+    pos.posx = 0.;
+    pos.posy = 0.;
+    pos.posz = 0.05;
+    pos.rotx = 0;
+    pos.roty = 0;
+    pos.rotz = 0;
+    
+    marsSimulationTask->setPosition(pos);
+    marsSimulationTask->start();
+    usleep(50000);
+    
+    /*velodyneSlamTask = new graph_slam::proxies::VelodyneSLAM("slam");
+    velodyneSlamTask->stop();
+    confHelper.applyConfig(velodyneSlamTask, "default");
+    
+    if(!trHelper->configureTransformer(velodyneSlamTask))
+    {
+	throw std::runtime_error("Init::Failed to configure transformer for task " + velodyneSlamTask->getName());
+    }
+    
+    velodyneSlamTask->configure();*/
+    connect();
+    //velodyneSlamTask->start();
+    usleep(100000);
 }

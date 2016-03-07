@@ -1,6 +1,5 @@
 rock_library(states
     SOURCES
-        InitSimulation.cpp
         Init.cpp
         GenerateMap.cpp
         DummyState.cpp

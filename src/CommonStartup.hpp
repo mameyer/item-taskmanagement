@@ -12,11 +12,9 @@ class CommonStartup
 {
 public:
     state_machine::StateMachine* stateMachine;
-    StateMachineWidget *widget;
     Init *init;
     bool planningActive;
     state_machine::Config *config;
-    QApplication *app;
     void start(int argc, char** argv);
     
     void runLoop(std::function<void()> loopCallback = [](){});

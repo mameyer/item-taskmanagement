@@ -1,5 +1,14 @@
 Environment: follower_environment
 Optimizer: cmaes_optimizer
 MaxEvaluations: 100000
-ControllerType: CONTROLLER_NO_ORIENTATION
-#ControllerType: CONTROLLER_CHAINED
+#ControllerType: CONTROLLER_NO_ORIENTATION
+ControllerType: CONTROLLER_SAMSON
+MaxK0NoOrientation: 5.0
+MaxK2: 5.0
+MaxK3: 5.0
+MaxL1: 0.4
+MaxDistanceError: 1.5
+MaxSeconds: 40
+DebugRatingCnt: 10
+TrajectorySpeed: 0.4
+TrId: 0

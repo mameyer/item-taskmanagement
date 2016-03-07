@@ -25,6 +25,8 @@
 #include <streambuf>
 #include <iostream>
 #include <boost/filesystem.hpp>
+#include <trajectory_follower/Trajectory.hpp>
+#include <trajectory_follower/TrajectoryFollowerTypes.hpp>
 
 class Drive: public state_machine::State
 {
@@ -35,6 +37,17 @@ public:
     virtual void exit();
     inline void setGoals(std::vector<base::samples::RigidBodyState> &goals) {
         this->goals = goals;
+    };
+    
+    struct HolonomicTrajectoryContainer {
+        HolonomicTrajectoryContainer(const std::vector< Eigen::Vector2d > &positions, double speed)
+        {
+            this->positions = positions;
+            this->speed = speed;
+        }
+        
+        std::vector< Eigen::Vector2d > positions;
+        double speed;
     };
 
 private:
@@ -48,8 +61,15 @@ private:
     RTT::InputPort< int > *trajectoryFollowerStateReader;
     RTT::InputPort< int > *globalPlannerStateReader;
     RTT::InputPort< std::vector< base::Trajectory > > *trajectoryReader;
+    RTT::OutputPort< std::vector< base::Trajectory > > *trajectoryWriter;
+    RTT::OutputPort< trajectory_follower::HolonomicTrajectory > *holonomicTrajectoryWriter;
+    localization::proxies::PoseProvider *poseProviderTask;
+    RTT::InputPort< base::samples::RigidBodyState > *poseReader;
     void writeTrajectory(const std::vector< base::Trajectory > &trajectory, const std::string& fullPath);
     GenerateMap genMap;
+    std::vector< HolonomicTrajectoryContainer > holonomicTrajectories;
+    std::function< base::Pose2D() > curPoseFun;
+    std::function< trajectory_follower::HolonomicTrajectory(const HolonomicTrajectoryContainer &) > genLateralTrajectory;
 };
 
 Drive::Drive(state_machine::State* success, state_machine::State* failure)
@@ -59,66 +79,113 @@ Drive::Drive(state_machine::State* success, state_machine::State* failure)
     registerSubState(&genMap);
     globalPlanner = new motion_planning_libraries::proxies::Task("planner", false);
     trajectoryFollower = new trajectory_follower::proxies::Task("follower");
+    poseProviderTask = new localization::proxies::PoseProvider("pose_provider");
+    poseReader = &(poseProviderTask->pose_samples.getReader());
     goalPoseWriter = &(globalPlanner->goal_pose_samples.getWriter());
     trajectoryFollowerStateReader = &(trajectoryFollower->state.getReader());
     globalPlannerStateReader = &(globalPlanner->state.getReader());
     trajectoryReader = &(globalPlanner->trajectory.getReader());
+    holonomicTrajectoryWriter = &(trajectoryFollower->holonomic_trajectory.getWriter());
     wasFollowing = false;
     logId = 0;
+    trajectoryWriter = &(trajectoryFollower->trajectory.getWriter());
+
+    curPoseFun = [=]() {
+        base::samples::RigidBodyState currentPose;
+        while (poseReader->readNewest(currentPose) == RTT::NoData) {
+            usleep(100);
+        }
+        base::Pose2D pose(currentPose.position, currentPose.orientation);
+        return pose;
+    };
+    
+    genLateralTrajectory = [=](const HolonomicTrajectoryContainer &tr) {
+        trajectory_follower::HolonomicTrajectory lateralCurveTrajectory;
+        base::Pose2D curPose = curPoseFun();
+        lateralCurveTrajectory.poses.push_back(curPose);
+        
+        for (auto p: tr.positions) {
+            curPose.position.x() += p.x();
+            curPose.position.y() += p.y();
+            lateralCurveTrajectory.poses.push_back(curPose);
+        }
+        
+        lateralCurveTrajectory.driveMode = trajectory_follower::ModeDiagonal;
+        lateralCurveTrajectory.speed = tr.speed;
+        
+        return lateralCurveTrajectory;
+    };
+    
+    holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(5,1)}, 0.5));
+    holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(3.5,1), Eigen::Vector2d(3.5,-1), Eigen::Vector2d(3.5,1)}, 0.5));
+    holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(-3.5,1), Eigen::Vector2d(-3.5,2), Eigen::Vector2d(-3.5,1)}, -0.5));
 }
 
 void Drive::enter(const state_machine::State* lastState)
 {
     if (goals.empty())
-	throw std::runtime_error("Drive::enter no goal set..");
-    
-    goalPoseWriter->write(goals.front());
+        throw std::runtime_error("Drive::enter no goal set..");
+
+    //goalPoseWriter->write(goals.front());
     goals.erase(goals.begin());
+
+    base::samples::RigidBodyState currentPose;
+    while (poseReader->readNewest(currentPose) == RTT::NoData) {
+        usleep(100);
+    }
+
+    holonomicTrajectoryWriter->write(genLateralTrajectory(holonomicTrajectories.front()));
+    holonomicTrajectories.erase(holonomicTrajectories.begin());
 }
 
 void Drive::executeFunction()
 {
     int globalPlannerState;
     if (globalPlannerStateReader->read(globalPlannerState) == RTT::NewData) {
-	
-	if (globalPlannerState == motion_planning_libraries::Task_STATES::Task_MISSING_START_GOAL_TRAV
-	    || globalPlannerState == motion_planning_libraries::Task_STATES::Task_MISSING_TRAV)
-	    executeSubState(genMap);
+
+        if (globalPlannerState == motion_planning_libraries::Task_STATES::Task_MISSING_START_GOAL_TRAV
+                || globalPlannerState == motion_planning_libraries::Task_STATES::Task_MISSING_TRAV)
+            executeSubState(genMap);
     }
-    
+
     std::vector< base::Trajectory > traj;
     if (trajectoryReader->read(traj) == RTT::NewData) {
-	const char* autoproj_root = std::getenv("AUTOPROJ_CURRENT_ROOT");
-	if(autoproj_root == NULL) {
-	    std::runtime_error("Env AUTOPROJ_CURRENT_ROOT not available, return");
-	}
+        const char* autoproj_root = std::getenv("AUTOPROJ_CURRENT_ROOT");
+        if(autoproj_root == NULL) {
+            std::runtime_error("Env AUTOPROJ_CURRENT_ROOT not available, return");
+        }
 
-	std::string autoproj_root_str(autoproj_root);
-	std::string path = autoproj_root_str + std::string("/bundles/eo2/logs/follower_trajectory.") + std::to_string(logId++) + std::string(".log");
-	writeTrajectory(traj, path);
+        std::string autoproj_root_str(autoproj_root);
+        std::string path = autoproj_root_str + std::string("/bundles/eo2/logs/follower_trajectory.") + std::to_string(logId++) + std::string(".log");
+        writeTrajectory(traj, path);
     }
-    
+
     int trajectoryFollowerState;
     if (trajectoryFollowerStateReader->readNewest(trajectoryFollowerState) == RTT::NewData) {
         if (!wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FOLLOWING_TRAJECTORY)
             wasFollowing = true;
-	
-	if (wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FINISHED_TRAJECTORIES) {
-	    wasFollowing = false;
-	    
-	    if (goals.empty()) {
-		finish();
-	    } else {
-		goalPoseWriter->write(goals.front());
-		goals.erase(goals.begin());
-	    }
-	}
+
+        if (wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FINISHED_TRAJECTORIES) {
+            wasFollowing = false;
+
+            if (goals.empty() || holonomicTrajectories.empty()) {
+                finish();
+            } else {
+                if (!holonomicTrajectories.empty()) {
+                    holonomicTrajectoryWriter->write(genLateralTrajectory(holonomicTrajectories.front()));
+                    holonomicTrajectories.erase(holonomicTrajectories.begin());
+                } else {
+                    goalPoseWriter->write(goals.front());
+                    goals.erase(goals.begin());
+                }
+            }
+        }
     }
 }
 
 void Drive::exit()
 {
-    
+
 }
 
 int main(int argc, char** argv)
@@ -157,19 +224,19 @@ int main(int argc, char** argv)
 
     std::vector< base::samples::RigidBodyState > goals;
     goals.push_back(goalPose);
-    
+
     std::random_device rd;
     std::mt19937 mt(rd());
     std::uniform_real_distribution<double> randPositionCoord(-5, 5);
     std::uniform_int_distribution<int> randOrientation(-50, 50);
-    
-    for (int i=0; i<50000; i++) {
-	base::samples::RigidBodyState rb;
-	rb.position = Eigen::Vector3d(randPositionCoord(mt), randPositionCoord(mt), 0.);
-	rb.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(base::Angle::deg2Rad(randOrientation(mt)), Eigen::Vector3d::UnitZ()));
-	goals.push_back(rb);
+
+    for (int i=0; i<1000; i++) {
+        base::samples::RigidBodyState rb;
+        rb.position = Eigen::Vector3d(randPositionCoord(mt), randPositionCoord(mt), 0.);
+        rb.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(base::Angle::deg2Rad(randOrientation(mt)), Eigen::Vector3d::UnitZ()));
+        goals.push_back(rb);
     }
-    
+
     base::samples::RigidBodyState home;
     home.position = Eigen::Vector3d(0., 0., 0.);
     home.orientation = Eigen::Quaterniond(Eigen::AngleAxisd(0., Eigen::Vector3d::UnitZ()));

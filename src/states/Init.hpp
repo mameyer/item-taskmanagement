@@ -19,11 +19,12 @@ public:
 
 class Init : public state_machine::State {
 public:
-    Init(bool logTasks);
+    Init(bool logTasks, bool active);
     void enter(const State *lastState);
     void exit();
     virtual void executeFunction();
     bool isInitialized();
+    bool restart();
 
 public:
     void updateConfig(RTT::TaskContext *task, const std::vector<std::string> &configs);
@@ -36,7 +37,6 @@ public:
     }
     
     virtual bool stop();
-    virtual bool restart() =0;
  
 protected:
     trajectory_follower::proxies::Task *trajectoryFollowerTask;
@@ -49,9 +49,16 @@ protected:
     odometry::proxies::Skid *odometryTask;
     joint_dispatcher::proxies::Task *eo2DispatcherTask;
     
+    // simulation
+    mars::proxies::RotatingLaserRangeFinder *velodyneTask;
+    drive_mode_controller::proxies::Task *driveModeControllerTask;
+    mars::proxies::IMU *perfectOdometryTask;
+    mars::proxies::Joints *jointsTask;
+    
     virtual bool setup();
     bool configure();
     virtual bool connect();
+    bool disconnect();
     bool start();
     
     void registerWithConfig(RTT::TaskContext *task, const std::vector<std::string> &configs);
@@ -61,6 +68,7 @@ protected:
 
     std::vector<TaskWithConfig> allTasks;
     
+    bool active;
     bool initialized;
     orocos_cpp::ConfigurationHelper confHelper;
     Eo2Robot robot;

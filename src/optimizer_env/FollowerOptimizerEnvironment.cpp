@@ -1,6 +1,8 @@
 #include "FollowerOptimizerEnvironment.hpp"
 
 #include <iostream>
+#include <math.h>
+#include <limits>
 
 namespace bolero {
 
@@ -42,10 +44,10 @@ void FollowerOptimizerEnvironment::getOutputs(double* values, int numOutputs) co
 
 void FollowerOptimizerEnvironment::stepAction()
 {
-    error = 4.5*functions.angleError() + 4.5*functions.distanceError() + functions.stability();
+    error = functions.angleError() + functions.distanceError(); //functions.stability();
     if (functions.stabilityFailed() || functions.maxDistanceErrReached())
-	error += 1.;
-    std::cout << "[" << runs++ << "] stepAction error: " << error << std::endl;
+	error = std::numeric_limits< double >::max();
+    std::cout << "[" << runs++ << "] stepAction error: " << error << "(" << functions.angleError() << ", " << functions.distanceError() << ", " << functions.stability() << ")" << std::endl;
     errors.push_back(error);
 }
 
