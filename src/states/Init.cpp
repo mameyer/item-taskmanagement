@@ -156,7 +156,8 @@ void Init::executeFunction()
 bool Init::connect()
 {
     poseProviderTask->pose_samples.connectTo(trajectoryFollowerTask->robot_pose);
-    trajectoryFollowerTask->motion2D.connectTo(motionCommandConverterTask->motion_command_in);
+    //trajectoryFollowerTask->motion2D.connectTo(motionCommandConverterTask->motion_command_in);
+    trajectoryFollowerTask->motion_command.connectTo(motionCommandConverterTask->motion_command_in);
     velodyneSlamTask->pose_provider_update.connectTo(poseProviderTask->pose_provider_update);
     
     if (active) {
@@ -167,7 +168,8 @@ bool Init::connect()
     }
     
     driveModeControllerTask->actuator_mov_cmds_out.connectTo(jointsTask->command);
-    motionCommandConverterTask->motion2D.connectTo(driveModeControllerTask->motion2D);
+    //motionCommandConverterTask->motion2D.connectTo(driveModeControllerTask->motion2D);
+    motionCommandConverterTask->motion_command.connectTo(driveModeControllerTask->motion_command);
     velodyneTask->pointcloud.connectTo(velodyneSlamTask->simulated_pointcloud);
     perfectOdometryTask->pose_samples.connectTo(poseProviderTask->odometry_samples);
     perfectOdometryTask->pose_samples.connectTo(velodyneSlamTask->odometry_samples);

@@ -247,8 +247,11 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
         currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION;
         loggerPath += std::string("CONTROLLER_NO_ORIENTATION__");
     } else if (strCotrollerType == "CONTROLLER_SAMSON") {
-        currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_SAMSON;
-        loggerPath += std::string("CONTROLLER_SAMSON__");
+        //currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_SAMSON;
+        //loggerPath += std::string("CONTROLLER_SAMSON__");
+    } else if (strCotrollerType == "CONTROLLER_CHAINED") {
+        currentTrajectoryControllerType = trajectory_follower::ControllerType::CONTROLLER_CHAINED;
+        loggerPath += std::string("CONTROLLER_CHAINED__");
     } else {
         std::runtime_error("wrong initialization for currentTrajectoryControllerType");
     }
@@ -288,8 +291,11 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
     case trajectory_follower::ControllerType::CONTROLLER_NO_ORIENTATION:
         environment->setNumInputs(2);
         break;
-    case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
-        environment->setNumInputs(2);
+//     case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+//         environment->setNumInputs(2);
+//         break;
+    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
+        environment->setNumInputs(3);
         break;
     default:
         std::runtime_error("wrong initialization for currentTrajectoryControllerType");
@@ -315,8 +321,13 @@ DriveLog::DriveLog(state_machine::State* success, state_machine::State* failure)
             params[0] = maxK0NoOrientation*values[0];
             params[1] = maxL1*values[1];
             break;
-        case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
-            params.resize(2);
+//         case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+//             params.resize(2);
+//             params[0] = maxK2*values[0];
+//             params[1] = maxK3*values[1];
+//             break;
+        case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
+            params.resize(3);
             params[0] = maxK2*values[0];
             params[1] = maxK3*values[1];
             break;
@@ -360,7 +371,11 @@ void DriveLog::enter(const state_machine::State* lastState)
         configValues["K0"] = environment->getCurParams()[0];
         configValues["l1"] = environment->getCurParams()[1];
         break;
-    case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+//     case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+//         configValues["K2"] = environment->getCurParams()[0];
+//         configValues["K3"] = environment->getCurParams()[1];
+//         break;
+    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
         configValues["K2"] = environment->getCurParams()[0];
         configValues["K3"] = environment->getCurParams()[1];
         break;
@@ -645,9 +660,13 @@ bool DriveLog::updateConfig(const std::map< std::string, double > &confVals, tra
         cType = ":CONTROLLER_NO_ORIENTATION";
         controllerConfigName = "noOrientationControllerConfig";
         break;
-    case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
-        cType = ":CONTROLLER_SAMSON";
-        controllerConfigName = "samsonControllerConfig";
+//     case trajectory_follower::ControllerType::CONTROLLER_SAMSON:
+//         cType = ":CONTROLLER_SAMSON";
+//         controllerConfigName = "samsonControllerConfig";
+//         break;
+    case trajectory_follower::ControllerType::CONTROLLER_CHAINED:
+        cType = ":CONTROLLER_CHAINED";
+        controllerConfigName = "chainedControllerConfig";
         break;
     default:
         std::runtime_error("wrong initialization for currentTrajectoryControllerType");

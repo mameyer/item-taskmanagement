@@ -55,3 +55,9 @@ namespace joint_dispatcher
         class Task;
     }
 }
+namespace drive_mode_controller
+{
+    namespace proxies {
+        class Task;
+    }
+}

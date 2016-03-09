@@ -27,6 +27,8 @@
 #include <boost/filesystem.hpp>
 #include <trajectory_follower/Trajectory.hpp>
 #include <trajectory_follower/TrajectoryFollowerTypes.hpp>
+#include <drive_mode_controller/drive_mode_controllerTypes.hpp>
+#include <drive_mode_controller/proxies/Task.hpp>
 
 class Drive: public state_machine::State
 {
@@ -38,16 +40,27 @@ public:
     inline void setGoals(std::vector<base::samples::RigidBodyState> &goals) {
         this->goals = goals;
     };
-    
-    struct HolonomicTrajectoryContainer {
-        HolonomicTrajectoryContainer(const std::vector< Eigen::Vector2d > &positions, double speed)
+
+    enum DriveMode {ModeAckermann,ModeTurnOnTheSpot,ModeSideways,ModeDiagonal};
+
+    struct TrajectoryContainer {
+        TrajectoryContainer(const std::vector< Eigen::Vector2d > &positions, double speed)
         {
             this->positions = positions;
             this->speed = speed;
+            this->driveMode = ModeAckermann;
         }
-        
+
+        TrajectoryContainer(const std::vector< double > &angles)
+        {
+            this->angles = angles;
+            this->speed = 0.5;
+        }
+
         std::vector< Eigen::Vector2d > positions;
+        std::vector< double > angles;
         double speed;
+        DriveMode driveMode;
     };
 
 private:
@@ -62,14 +75,21 @@ private:
     RTT::InputPort< int > *globalPlannerStateReader;
     RTT::InputPort< std::vector< base::Trajectory > > *trajectoryReader;
     RTT::OutputPort< std::vector< base::Trajectory > > *trajectoryWriter;
-    RTT::OutputPort< trajectory_follower::HolonomicTrajectory > *holonomicTrajectoryWriter;
+    //RTT::OutputPort< trajectory_follower::HolonomicTrajectory > *holonomicTrajectoryWriter;
     localization::proxies::PoseProvider *poseProviderTask;
     RTT::InputPort< base::samples::RigidBodyState > *poseReader;
     void writeTrajectory(const std::vector< base::Trajectory > &trajectory, const std::string& fullPath);
     GenerateMap genMap;
-    std::vector< HolonomicTrajectoryContainer > holonomicTrajectories;
+    //std::vector< TrajectoryContainer > holonomicTrajectories;
     std::function< base::Pose2D() > curPoseFun;
-    std::function< trajectory_follower::HolonomicTrajectory(const HolonomicTrajectoryContainer &) > genLateralTrajectory;
+    //std::function< trajectory_follower::HolonomicTrajectory(const TrajectoryContainer &) > genLateralTrajectory;
+    std::vector< TrajectoryContainer > trajectoryVec;
+    std::function< base::Trajectory(const TrajectoryContainer &) > genTrajectory;
+    drive_mode_controller::proxies::Task *driveModeControllerTask;
+    RTT::OutputPort< drive_mode_controller::DriveModeStructure > *driveModeControllerDriveModeWriter;
+    RTT::InputPort< base::commands::Motion2D > *trajectoryFollowerMotionCommandReader;
+    RTT::InputPort< trajectory_follower::FollowerData > *followerDataReader;
+    bool wasPointTurn;
 };
 
 Drive::Drive(state_machine::State* success, state_machine::State* failure)
@@ -80,15 +100,19 @@ Drive::Drive(state_machine::State* success, state_machine::State* failure)
     globalPlanner = new motion_planning_libraries::proxies::Task("planner", false);
     trajectoryFollower = new trajectory_follower::proxies::Task("follower");
     poseProviderTask = new localization::proxies::PoseProvider("pose_provider");
+    driveModeControllerTask = new drive_mode_controller::proxies::Task("drive_mode_controller");
     poseReader = &(poseProviderTask->pose_samples.getReader());
     goalPoseWriter = &(globalPlanner->goal_pose_samples.getWriter());
     trajectoryFollowerStateReader = &(trajectoryFollower->state.getReader());
     globalPlannerStateReader = &(globalPlanner->state.getReader());
     trajectoryReader = &(globalPlanner->trajectory.getReader());
-    holonomicTrajectoryWriter = &(trajectoryFollower->holonomic_trajectory.getWriter());
+    //holonomicTrajectoryWriter = &(trajectoryFollower->holonomic_trajectory.getWriter());
     wasFollowing = false;
     logId = 0;
     trajectoryWriter = &(trajectoryFollower->trajectory.getWriter());
+    driveModeControllerDriveModeWriter = &(driveModeControllerTask->drive_mode_in.getWriter());
+    trajectoryFollowerMotionCommandReader = &(trajectoryFollower->motion_command.getReader());
+    followerDataReader = &(trajectoryFollower->follower_data.getReader(RTT::ConnPolicy::buffer(200)));
 
     curPoseFun = [=]() {
         base::samples::RigidBodyState currentPose;
@@ -98,27 +122,69 @@ Drive::Drive(state_machine::State* success, state_machine::State* failure)
         base::Pose2D pose(currentPose.position, currentPose.orientation);
         return pose;
     };
-    
-    genLateralTrajectory = [=](const HolonomicTrajectoryContainer &tr) {
-        trajectory_follower::HolonomicTrajectory lateralCurveTrajectory;
+
+//     genLateralTrajectory = [=](const TrajectoryContainer &tr) {
+//         trajectory_follower::HolonomicTrajectory lateralCurveTrajectory;
+//         base::Pose2D curPose = curPoseFun();
+//         lateralCurveTrajectory.poses.push_back(curPose);
+//
+//         for (auto p: tr.positions) {
+//             curPose.position.x() += p.x();
+//             curPose.position.y() += p.y();
+//             lateralCurveTrajectory.poses.push_back(curPose);
+//         }
+//
+//         lateralCurveTrajectory.driveMode = trajectory_follower::ModeDiagonal;
+//         lateralCurveTrajectory.speed = tr.speed;
+//
+//         return lateralCurveTrajectory;
+//     };
+
+    genTrajectory = [=](const TrajectoryContainer &tr) {
+        base::Trajectory curTrajectory;
         base::Pose2D curPose = curPoseFun();
-        lateralCurveTrajectory.poses.push_back(curPose);
-        
-        for (auto p: tr.positions) {
-            curPose.position.x() += p.x();
-            curPose.position.y() += p.y();
-            lateralCurveTrajectory.poses.push_back(curPose);
+
+        std::vector<base::Vector3d> path;
+        std::vector<double> parameters;
+        std::vector<base::geometry::SplineBase::CoordinateType> coord_types;
+
+        path.push_back(Eigen::Vector3d(curPose.position.x(), curPose.position.y(), 0.));
+        coord_types.push_back(base::geometry::SplineBase::ORDINARY_POINT);
+
+        if (!tr.positions.empty()) {
+            for (auto p: tr.positions) {
+                curPose.position.x() += p.x();
+                curPose.position.y() += p.y();
+                coord_types.push_back(base::geometry::SplineBase::ORDINARY_POINT);
+                path.push_back(Eigen::Vector3d(curPose.position.x(), curPose.position.y(), 0.));
+            }
+        } else {
+            for (auto a: tr.angles) {
+                curPose.orientation += a;
+                coord_types.push_back(base::geometry::SplineBase::ORDINARY_POINT);
+                path.push_back(Eigen::Vector3d(curPose.position.x(), curPose.position.y(), 0.));
+            }
         }
-        
-        lateralCurveTrajectory.driveMode = trajectory_follower::ModeDiagonal;
-        lateralCurveTrajectory.speed = tr.speed;
-        
-        return lateralCurveTrajectory;
+
+        try {
+            curTrajectory.spline.interpolate(path, parameters, coord_types);
+        } catch (std::runtime_error& e) {
+            std::cout << "Spline exception: " << e.what() << std::endl;
+        }
+
+        curTrajectory.speed = tr.speed;
+        return curTrajectory;
     };
-    
-    holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(5,1)}, 0.5));
-    holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(3.5,1), Eigen::Vector2d(3.5,-1), Eigen::Vector2d(3.5,1)}, 0.5));
-    holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(-3.5,1), Eigen::Vector2d(-3.5,2), Eigen::Vector2d(-3.5,1)}, -0.5));
+
+//     holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(5,1)}, 0.5));
+//     holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(3.5,1), Eigen::Vector2d(3.5,-1), Eigen::Vector2d(3.5,1)}, 0.5));
+//     holonomicTrajectories.push_back(HolonomicTrajectoryContainer({Eigen::Vector2d(-3.5,1), Eigen::Vector2d(-3.5,2), Eigen::Vector2d(-3.5,1)}, -0.5));
+
+    trajectoryVec.push_back(TrajectoryContainer( {Eigen::Vector2d(3,0)}, 0.5));
+    trajectoryVec.push_back(TrajectoryContainer( {Eigen::Vector2d(3,0)}, -0.5));
+    trajectoryVec.push_back(TrajectoryContainer( {Eigen::Vector2d(3,0)}, 0.5));
+
+    wasPointTurn = false;
 }
 
 void Drive::enter(const state_machine::State* lastState)
@@ -134,8 +200,15 @@ void Drive::enter(const state_machine::State* lastState)
         usleep(100);
     }
 
-    holonomicTrajectoryWriter->write(genLateralTrajectory(holonomicTrajectories.front()));
-    holonomicTrajectories.erase(holonomicTrajectories.begin());
+//     holonomicTrajectoryWriter->write(genLateralTrajectory(holonomicTrajectories.front()));
+//     holonomicTrajectories.erase(holonomicTrajectories.begin());
+
+    std::vector< base::Trajectory > trs;
+    trs.push_back(genTrajectory(trajectoryVec.front()));
+    trajectoryVec.erase(trajectoryVec.begin());
+
+    trajectoryWriter->write(trs);
+    wasPointTurn = false;
 }
 
 void Drive::executeFunction()
@@ -162,21 +235,54 @@ void Drive::executeFunction()
 
     int trajectoryFollowerState;
     if (trajectoryFollowerStateReader->readNewest(trajectoryFollowerState) == RTT::NewData) {
-        if (!wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FOLLOWING_TRAJECTORY)
+        if (!wasFollowing) {
             wasFollowing = true;
+            drive_mode_controller::DriveModeStructure m;
+            m.Ratio = 0.5;
+            if (trajectoryFollowerState == trajectory_follower::Task_STATES::Task_TURN_ON_SPOT) {
+                m.Mode = (int)ModeTurnOnTheSpot;
+                driveModeControllerDriveModeWriter->write(m);
+                std::cout << "switching to ModeTurnOnTheSpot.." << std::endl;
+                wasPointTurn = true;
+            } else if (trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FOLLOWING_TRAJECTORY) {
+                m.Mode = (int)ModeAckermann;
+                driveModeControllerDriveModeWriter->write(m);
+                std::cout << "set ModeAckermann.." << std::endl;
+            }
+        }
 
-        if (wasFollowing && trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FINISHED_TRAJECTORIES) {
-            wasFollowing = false;
+        if (wasFollowing) {
+            if (wasPointTurn) {
+                if (trajectoryFollowerState != trajectory_follower::Task_STATES::Task_TURN_ON_SPOT) {
+                    drive_mode_controller::DriveModeStructure m;
+                    m.Ratio = 0.5;
+                    m.Mode = (int)ModeAckermann;
+                    driveModeControllerDriveModeWriter->write(m);
+                    wasPointTurn = false;
+                    std::cout << "switching to ModeAckermann.." << std::endl;
+                }
+            }
 
-            if (goals.empty() || holonomicTrajectories.empty()) {
-                finish();
-            } else {
-                if (!holonomicTrajectories.empty()) {
-                    holonomicTrajectoryWriter->write(genLateralTrajectory(holonomicTrajectories.front()));
-                    holonomicTrajectories.erase(holonomicTrajectories.begin());
+            if (trajectoryFollowerState == trajectory_follower::Task_STATES::Task_FINISHED_TRAJECTORIES) {
+                wasFollowing = false;
+
+                if (goals.empty() || trajectoryVec.empty()) { // || holonomicTrajectories.empty()) {
+                    finish();
                 } else {
-                    goalPoseWriter->write(goals.front());
-                    goals.erase(goals.begin());
+//                 if (!holonomicTrajectories.empty()) {
+//                     holonomicTrajectoryWriter->write(genLateralTrajectory(holonomicTrajectories.front()));
+//                     holonomicTrajectories.erase(holonomicTrajectories.begin());
+//                 } else {
+                    if (!trajectoryVec.empty()) {
+                        std::vector< base::Trajectory > trs;
+                        trs.push_back(genTrajectory(trajectoryVec.front()));
+                        trajectoryVec.erase(trajectoryVec.begin());
+                        trajectoryWriter->write(trs);
+                        std::cout << "write new trajectory.." << std::endl;
+                    } else {
+                        goalPoseWriter->write(goals.front());
+                        goals.erase(goals.begin());
+                    }
                 }
             }
         }
